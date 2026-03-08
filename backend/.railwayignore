@@ -1,0 +1,10 @@
+Quiet night datasets
+QuietNight_Training_Data
+supabase
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+.DS_Store
+.git

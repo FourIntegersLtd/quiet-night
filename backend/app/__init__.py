@@ -1,0 +1,1 @@
+# QuietNight FastAPI backend

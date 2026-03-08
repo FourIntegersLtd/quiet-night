@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "quietnight-backend"
+version = "0.1.0"
+description = "QuietNight API — FastAPI + Supabase"
+authors = ["FourIntegersLtd <fourintegers@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "app", from = "." }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.0"
+uvicorn = { extras = ["standard"], version = "^0.32.0" }
+supabase = "^2.10.0"
+python-jose = { extras = ["cryptography"], version = "^3.3.0" }
+pydantic-settings = "^2.6.0"
+openai = "^1.55.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
