@@ -1,0 +1,26 @@
+---
+description: QuietNight project conventions — storage, types, theme, hooks, naming
+alwaysApply: true
+---
+
+# QuietNight Conventions
+
+- **Storage**: One MMKV instance only, from `lib/storage.ts`. Screens and hooks never create `new MMKV()`. All night/snore data goes through `lib/nights.ts`; keys and key builders live in `constants/app.ts`.
+- **Types**: Shared domain types in `types/` (e.g. `SnoreEvent`, `CheckStatus`). Import from `@/types` or `@/types/night`. Do not redefine the same interface in multiple files.
+- **Theme**: All styling tokens from `@/constants/theme` (`type.*`, `spacing.*`, `accent.*`, etc.). No hardcoded colors or spacing magic numbers in screens/components.
+- **Constants**: App config (storage keys, thresholds, durations) in `constants/app.ts`. Use `LOW_STORAGE_MB`, `nightKey(date)`, etc. from there.
+- **Hooks**: In `hooks/`; one primary hook per file; prefix `use`. No 600-line screens with hooks inlined.
+- **Screens**: Default export only; use hooks and lib for data/effects; keep under ~200 lines or extract sections into components.
+- **Naming**: camelCase (functions, variables), PascalCase (components, types), SCREAMING_SNAKE for module-level constants.
+- **Imports**: Use `@/` path alias; prefer double quotes for strings.
+
+```ts
+// Good: types and lib
+import type { SnoreEvent } from "@/types";
+import { getNightSnores } from "@/lib/nights";
+import { LOW_STORAGE_MB } from "@/constants/app";
+
+// Bad: redefining types or creating MMKV in a screen
+const storage = new MMKV();
+interface SnoreEvent { ... }
+```

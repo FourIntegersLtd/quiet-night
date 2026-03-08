@@ -1,0 +1,20 @@
+---
+description: QuietNight folder structure and where to add new code
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# QuietNight Structure
+
+- **app/** — Expo Router routes and screens. One screen per file; thin, delegate to hooks and lib.
+- **hooks/** — Custom hooks (e.g. `use-system-checks.ts`, `use-room-noise-test.ts`). One concern per hook.
+- **lib/** — Storage, nights API, recordings (file helpers), formatters. No UI. Used by hooks and screens.
+- **types/** — Shared TypeScript types (e.g. `SnoreEvent`, `CheckStatus`). Re-export from `types/index.ts`.
+- **constants/** — `theme.ts` (design tokens), `app.ts` (storage keys, thresholds).
+- **components/** — Reusable UI only.
+
+**Where to add:**
+- New screen → `app/` (appropriate route).
+- New hook → `hooks/` (e.g. `use-foo.ts`).
+- New storage/formatting helper → `lib/` (e.g. `lib/nights.ts` or `lib/formatters.ts`).
+- New shared type → `types/` (e.g. `types/night.ts` or `types/index.ts`).
