@@ -31,7 +31,7 @@ import {
   stopListening,
   getCurrentNoiseLevel,
 } from "@/modules/expo-snore-detector";
-import { ROOM_TEST_DURATION_SEC, PREFLIGHT_MIN_STORAGE_MB } from "@/constants/app";
+import { PREFLIGHT_MIN_STORAGE_MB } from "@/constants/app";
 import type { CheckStatus, RoomNoiseResult } from "@/types";
 import type { RemedyType, AlcoholLevel, CongestionLevel } from "@/types";
 import {
@@ -41,6 +41,7 @@ import {
   setNightRemedy,
   type NightFactors,
 } from "@/lib/nights";
+import { clearWavRecordingsOlderThanDays } from "@/lib/recordings";
 import {
   background,
   accent,
@@ -53,13 +54,25 @@ import {
   fonts,
 } from "@/constants/theme";
 import { PrimaryButton, GhostButton } from "@/components/ui/buttons";
+import { PreflightWarningsModal } from "@/components/PreflightWarningsModal";
+import { CalibrationResultsModal } from "@/components/CalibrationResultsModal";
 import { IconSelectorGrid, type IconSelectorItem } from "@/components/IconSelectorGrid";
 import { useToast } from "@/contexts/ToastContext";
-import type { SleepSoundId } from "@/lib/sleep-sounds";
+import { SLEEP_SOUND_OPTIONS, type SleepSoundId } from "@/lib/sleep-sounds";
 
 const NATIVE_CALIBRATION_MS = 6000;
 const NATIVE_POLL_MS = 300;
-const TOTAL_QUESTIONNAIRE_STEPS = 4;
+const TOTAL_QUESTIONNAIRE_STEPS = 5;
+
+const WIND_DOWN_MINUTES = [0, 5, 10, 15, 20, 30] as const;
+const WIND_DOWN_ITEMS: IconSelectorItem[] = [
+  { id: "0", icon: "play-outline", label: "Start now" },
+  { id: "5", icon: "time-outline", label: "5 min" },
+  { id: "10", icon: "time-outline", label: "10 min" },
+  { id: "15", icon: "time-outline", label: "15 min" },
+  { id: "20", icon: "time-outline", label: "20 min" },
+  { id: "30", icon: "time-outline", label: "30 min" },
+];
 
 
 function dbToRoomResult(db: number): RoomNoiseResult {
@@ -225,10 +238,10 @@ export default function WizardScreen() {
   const toast = useToast();
   const [step, setStep] = useState(0);
   const [roomResult, setRoomResult] = useState<RoomNoiseResult | null>(null);
-  const [baselineNoiseDb, setBaselineNoiseDb] = useState<number | null>(null);
   const [nativeCalibrating, setNativeCalibrating] = useState(false);
 
-  const [sleepSound] = useState<SleepSoundId>("none");
+  const [windDownMinutes, setWindDownMinutes] = useState<number>(0);
+  const [sleepSound, setSleepSound] = useState<SleepSoundId>("none");
   const [alcoholLevel, setAlcoholLevel] = useState<AlcoholLevel>("NONE");
   const [congestionLevel, setCongestionLevel] = useState<CongestionLevel>("CLEAR");
   const [selectedPreSleepFactors, setSelectedPreSleepFactors] = useState<string[]>([]);
@@ -262,7 +275,27 @@ export default function WizardScreen() {
     batteryPct,
     isPluggedIn,
     runMicCheck,
+    runStorageCheck,
+    showLowBatteryWarning,
+    showLowStorageWarning,
   } = useSystemChecks();
+
+  const [warningsModalDismissed, setWarningsModalDismissed] = useState(false);
+  const [clearOldRecordingsLoading, setClearOldRecordingsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showLowBatteryWarning && !showLowStorageWarning) setWarningsModalDismissed(false);
+  }, [showLowBatteryWarning, showLowStorageWarning]);
+
+  const handleClearOldRecordings = () => {
+    setClearOldRecordingsLoading(true);
+    try {
+      clearWavRecordingsOlderThanDays(7);
+      runStorageCheck();
+    } finally {
+      setClearOldRecordingsLoading(false);
+    }
+  };
 
   const hasStorage = storageMB !== null && storageMB >= PREFLIGHT_MIN_STORAGE_MB;
   const roomTestStartedRef = useRef(false);
@@ -290,7 +323,6 @@ export default function WizardScreen() {
             clearInterval(interval);
             stopListening().then(() => {
               const avg = samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : -60;
-              setBaselineNoiseDb(Math.round(avg));
               setRoomResult(dbToRoomResult(avg));
               setNativeCalibrating(false);
             });
@@ -308,7 +340,7 @@ export default function WizardScreen() {
   }, [step, roomResult, useNativeCalibration, nativeCalibrating, startTest]);
 
   const canProceedFromStep0 = micStatus === "ok" && hasStorage;
-  const questionnaireStepIndex = step - 2;
+
 
   const handleSave = () => {
     const key = getTodayNightKey();
@@ -316,6 +348,7 @@ export default function WizardScreen() {
     const factors: NightFactors = {
       alcohol_level: alcoholLevel,
       congestion_level: congestionLevel,
+      room_result: roomResult ?? undefined,
       caffeine: selectedPreSleepFactors.includes("caffeine"),
       exhausted_today: selectedPreSleepFactors.includes("exhausted"),
       worked_out: selectedPreSleepFactors.includes("worked_out") || undefined,
@@ -328,6 +361,7 @@ export default function WizardScreen() {
       })(),
       note: notes || undefined,
       sleep_sound: sleepSound,
+      wind_down_minutes: windDownMinutes,
     };
     setNightFactors(key, factors);
     const remedies: RemedyType[] = selectedInterventions.length ? selectedInterventions : ["BASELINE"];
@@ -344,6 +378,8 @@ export default function WizardScreen() {
   const handleResetAnswers = () => {
     setStepMenuVisible(false);
     setNotes("");
+    setWindDownMinutes(0);
+    setSleepSound("none");
     setAlcoholLevel("NONE");
     setCongestionLevel("CLEAR");
     setSelectedPreSleepFactors([]);
@@ -355,8 +391,29 @@ export default function WizardScreen() {
     handleSave();
   };
 
+  const showWarningsModal =
+    step === 0 &&
+    (showLowBatteryWarning || showLowStorageWarning) &&
+    !warningsModalDismissed;
+
+  const showCalibrationModal = step === 1 && roomResult !== null;
+
   return (
     <View style={styles.container}>
+      <CalibrationResultsModal
+        visible={showCalibrationModal}
+        result={roomResult}
+        onContinue={() => setStep(2)}
+      />
+      <PreflightWarningsModal
+        visible={showWarningsModal}
+        onDismiss={() => setWarningsModalDismissed(true)}
+        lowBattery={showLowBatteryWarning}
+        lowStorage={showLowStorageWarning}
+        onClearOldRecordings={handleClearOldRecordings}
+        onOpenProfile={() => router.push("/(tabs)/profile")}
+        clearOldRecordingsLoading={clearOldRecordingsLoading}
+      />
       <WizardChrome
         stepIndex={step}
         onBack={handleWizardBack}
@@ -414,6 +471,15 @@ export default function WizardScreen() {
                 </Text>
               </View>
             </View>
+            {(showLowBatteryWarning || showLowStorageWarning) && (
+              <TouchableOpacity
+                style={styles.howToFixLink}
+                onPress={() => setWarningsModalDismissed(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.howToFixLinkText}>How to fix →</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.continueBtn}>
               <PrimaryButton
                 label="Continue"
@@ -444,14 +510,7 @@ export default function WizardScreen() {
               </>
             )}
             {!isListening && roomResult !== null && (
-              <>
-                <View style={styles.resultCircle}>
-                  <Text style={styles.resultEmoji}>{roomResult === "quiet" ? "✓" : roomResult === "moderate" ? "~" : "!"}</Text>
-                </View>
-                <View style={styles.continueBtn}>
-                <PrimaryButton label="Continue" onPress={() => setStep(2)} />
-              </View>
-              </>
+              <Text style={styles.calibrationDoneLabel}>Calibration complete.</Text>
             )}
             {!isListening && roomResult === null && !useNativeCalibration && (
               <ActivityIndicator size="large" color={accent.teal} style={{ marginVertical: 24 }} />
@@ -459,8 +518,37 @@ export default function WizardScreen() {
           </View>
         )}
 
-        {/* Step 2: Pre-Sleep Factors */}
+        {/* Step 2: Wind down — time before tracking + sleep sound */}
         {step === 2 && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Wind down</Text>
+            <Text style={styles.cardSub}>
+              Choose how long to play a sound before tracking starts. Select &quot;Start now&quot; to begin tracking immediately.
+            </Text>
+            <Text style={styles.factorLabel}>Time before tracking</Text>
+            <IconSelectorGrid
+              items={WIND_DOWN_ITEMS}
+              selectedIds={[String(windDownMinutes)]}
+              onSelect={(id) => setWindDownMinutes(Number(id))}
+            />
+            <Text style={[styles.factorLabel, { marginTop: spacing.stackLg }]}>Sleep sound</Text>
+            <Text style={[styles.cardSub, { marginBottom: spacing.xs }]}>
+              Plays during the wind-down and while tracking (optional).
+            </Text>
+            <IconSelectorGrid
+              items={SLEEP_SOUND_OPTIONS as IconSelectorItem[]}
+              selectedIds={[sleepSound]}
+              onSelect={(id) => setSleepSound(id as SleepSoundId)}
+            />
+            <View style={styles.navRow}>
+              <GhostButton label="Back" onPress={() => setStep(1)} />
+              <PrimaryButton label="Next" onPress={() => setStep(3)} />
+            </View>
+          </View>
+        )}
+
+        {/* Step 3: Pre-Sleep Factors */}
+        {step === 3 && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Pre-sleep factors</Text>
             <Text style={styles.cardSub}>
@@ -521,14 +609,14 @@ export default function WizardScreen() {
             />
 
             <View style={styles.navRow}>
-              <GhostButton label="Back" onPress={() => setStep(1)} />
-              <PrimaryButton label="Next" onPress={() => setStep(3)} />
+              <GhostButton label="Back" onPress={() => setStep(2)} />
+              <PrimaryButton label="Next" onPress={() => setStep(4)} />
             </View>
           </View>
         )}
 
-        {/* Step 3: Interventions */}
-        {step === 3 && (
+        {/* Step 4: Interventions */}
+        {step === 4 && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Interventions</Text>
             <Text style={styles.cardSub}>
@@ -540,14 +628,14 @@ export default function WizardScreen() {
               onSelect={toggleIntervention}
             />
             <View style={styles.navRow}>
-              <GhostButton label="Back" onPress={() => setStep(2)} />
-              <PrimaryButton label="Next" onPress={() => setStep(4)} />
+              <GhostButton label="Back" onPress={() => setStep(3)} />
+              <PrimaryButton label="Next" onPress={() => setStep(5)} />
             </View>
           </View>
         )}
 
-        {/* Step 4: Notes */}
-        {step === 4 && (
+        {/* Step 5: Notes */}
+        {step === 5 && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Notes</Text>
             <Text style={styles.cardSub}>Anything else? (e.g. "Late dinner", "Stressful day")</Text>
@@ -561,24 +649,33 @@ export default function WizardScreen() {
               numberOfLines={3}
             />
             <View style={styles.navRow}>
-              <GhostButton label="Back" onPress={() => setStep(3)} />
-              <PrimaryButton label="Next" onPress={() => setStep(5)} />
+              <GhostButton label="Back" onPress={() => setStep(4)} />
+              <PrimaryButton label="Next" onPress={() => setStep(6)} />
             </View>
           </View>
         )}
 
-        {/* Step 5: Summary */}
-        {step === 5 && (
+        {/* Step 6: Summary */}
+        {step === 6 && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Ready for tonight</Text>
             <Text style={styles.cardSub}>Review and start tracking.</Text>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Wind down</Text>
+              <Text style={styles.summaryValue}>
+                {windDownMinutes === 0 ? "Start now" : `${windDownMinutes} min`} · {SLEEP_SOUND_OPTIONS.find((i) => i.id === sleepSound)?.label ?? sleepSound}
+              </Text>
+              <TouchableOpacity onPress={() => setStep(2)} hitSlop={8}>
+                <Ionicons name="pencil" size={18} color={text.muted} />
+              </TouchableOpacity>
+            </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Pre-sleep</Text>
               <Text style={styles.summaryValue}>
                 Alcohol {ALCOHOL_ITEMS.find((i) => i.id === alcoholLevel)?.label ?? alcoholLevel} · Congestion {CONGESTION_ITEMS.find((i) => i.id === congestionLevel)?.label ?? congestionLevel}
                 {selectedPreSleepFactors.length ? ` · ${selectedPreSleepFactors.map((id) => PRE_SLEEP_FACTOR_ITEMS.find((i) => i.id === id)?.label ?? id).join(", ")}` : ""}
               </Text>
-              <TouchableOpacity onPress={() => setStep(2)} hitSlop={8}>
+              <TouchableOpacity onPress={() => setStep(3)} hitSlop={8}>
                 <Ionicons name="pencil" size={18} color={text.muted} />
               </TouchableOpacity>
             </View>
@@ -587,12 +684,12 @@ export default function WizardScreen() {
               <Text style={styles.summaryValue}>
                 {selectedInterventions.map((id) => REMEDY_ITEMS.find((i) => i.id === id)?.label ?? id).join(", ")}
               </Text>
-              <TouchableOpacity onPress={() => setStep(3)}><Ionicons name="pencil" size={18} color={text.muted} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => setStep(4)}><Ionicons name="pencil" size={18} color={text.muted} /></TouchableOpacity>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Notes</Text>
               <Text style={styles.summaryValue} numberOfLines={2}>{notes || "—"}</Text>
-              <TouchableOpacity onPress={() => setStep(4)} hitSlop={8}>
+              <TouchableOpacity onPress={() => setStep(5)} hitSlop={8}>
                 <Ionicons name="pencil" size={18} color={text.muted} />
               </TouchableOpacity>
             </View>
@@ -730,6 +827,9 @@ const styles = StyleSheet.create({
   checkValue: { ...type.bodySmall, marginTop: 2 },
   retryBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.button, backgroundColor: accent.tealSoftBg },
   retryBtnText: { ...type.button, color: accent.teal },
+  howToFixLink: { marginTop: spacing.sm, alignSelf: "flex-start" },
+  howToFixLinkText: { ...type.bodyMd, color: accent.primary },
+  calibrationDoneLabel: { ...type.bodySmall, color: text.secondary, marginTop: spacing.sm },
   continueBtn: { marginTop: spacing.stackXl },
   waveBarContainer: {
     flexDirection: "row",
@@ -739,18 +839,6 @@ const styles = StyleSheet.create({
     marginVertical: spacing.stackLg,
   },
   listeningLabel: { ...type.titleCard, color: text.primary, textAlign: "center" },
-  resultCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: semantic.success,
-    alignSelf: "center",
-    justifyContent: "center",
-    alignItems: "center",
-    marginVertical: spacing.stackLg,
-  },
-  resultEmoji: { fontSize: 26, color: text.primary },
   navRow: { flexDirection: "row", gap: spacing.stackMd, marginTop: spacing.stackXl, justifyContent: "space-between" },
   severityWrap: { marginVertical: spacing.stackLg },
   severityRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.stackSm },

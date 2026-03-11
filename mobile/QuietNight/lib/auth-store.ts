@@ -1,7 +1,8 @@
 /**
  * Auth & partner linking store (UI-only).
- * Session is stored in Expo SecureStore (Keychain/Keystore). Rest in MMKV.
- * Replace with backend API later.
+ * Session is stored in Expo SecureStore (Keychain/Keystore) and mirrored in MMKV
+ * so it persists across app restarts when SecureStore is unavailable (e.g. simulator).
+ * Rest of auth data in MMKV.
  */
 
 import * as SecureStore from "expo-secure-store";
@@ -19,6 +20,10 @@ function uuid(): string {
 export interface StoredUser extends User {
   email: string;
   password: string;
+  /** From onboarding: "what they'd like to be called" */
+  preferred_name?: string | null;
+  /** From onboarding: partner's name */
+  partner_name?: string | null;
 }
 
 export interface AuthSession {
@@ -40,42 +45,56 @@ export interface PendingInvite {
 
 const storage = () => getStorage();
 
-// ----- Session (SecureStore: Keychain on iOS, Keystore on Android) -----
+// ----- Session (SecureStore + MMKV fallback so it persists after app close) -----
+function parseAndValidateSession(raw: string): AuthSession | null {
+  try {
+    const session = JSON.parse(raw) as AuthSession;
+    if (session.accessToken !== undefined || session.refreshToken !== undefined) {
+      if (!session.accessToken || typeof session.accessToken !== "string") return null;
+      if (!session.refreshToken || typeof session.refreshToken !== "string") return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
+}
+
 export async function getSession(): Promise<AuthSession | null> {
   try {
-    const raw = await SecureStore.getItemAsync(STORAGE_KEYS.AUTH_SESSION);
+    let raw: string | null = await SecureStore.getItemAsync(STORAGE_KEYS.AUTH_SESSION);
+    if (!raw) {
+      const mmkvRaw = storage().getString(STORAGE_KEYS.AUTH_SESSION);
+      raw = mmkvRaw ?? null;
+      if (raw && __DEV__) console.log("[Session] Restored from MMKV fallback");
+      if (raw) {
+        try {
+          await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_SESSION, raw);
+        } catch {
+          // Keychain may still be unavailable; keep using MMKV
+        }
+      }
+    }
     if (!raw) return null;
 
-    if (__DEV__) {
-      console.log("[Session] Raw data length:", raw.length);
+    if (__DEV__) console.log("[Session] Raw data length:", raw.length);
+
+    const session = parseAndValidateSession(raw);
+    if (!session) {
+      if (__DEV__) console.warn("[Session] Invalid session data, clearing");
+      await setSession(null);
+      return null;
     }
 
-    const session = JSON.parse(raw) as AuthSession;
-
-    // When using backend auth, require valid tokens
-    if (session.accessToken !== undefined || session.refreshToken !== undefined) {
-      if (!session.accessToken || typeof session.accessToken !== "string") {
-        if (__DEV__) console.warn("[Session] Invalid access token, clearing");
-        await setSession(null);
-        return null;
-      }
-      if (!session.refreshToken || typeof session.refreshToken !== "string") {
-        if (__DEV__) console.warn("[Session] Invalid refresh token, clearing");
-        await setSession(null);
-        return null;
-      }
-      if (__DEV__) {
-        console.log("[Session] access_token length:", session.accessToken.length);
-        console.log("[Session] refresh_token length:", session.refreshToken.length);
-      }
+    if (__DEV__ && session.accessToken) {
+      console.log("[Session] access_token length:", session.accessToken.length);
+      console.log("[Session] refresh_token length:", session.refreshToken?.length ?? 0);
     }
 
-    // If expired, still return session so the API interceptor can refresh
     if (session.expiresAt != null) {
       const expiresMs =
         session.expiresAt > 1e12 ? session.expiresAt : session.expiresAt * 1000;
-      if (Date.now() > expiresMs) {
-        if (__DEV__) console.log("[Session] Expired; interceptor will refresh on next request");
+      if (Date.now() > expiresMs && __DEV__) {
+        console.log("[Session] Expired; interceptor will refresh on next request");
       }
     }
 
@@ -87,14 +106,21 @@ export async function getSession(): Promise<AuthSession | null> {
 }
 
 export async function setSession(session: AuthSession | null): Promise<void> {
+  const json = session === null ? "" : JSON.stringify(session);
   try {
     if (session === null) {
       await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_SESSION);
+      storage().delete(STORAGE_KEYS.AUTH_SESSION);
     } else {
-      await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_SESSION, JSON.stringify(session));
+      await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_SESSION, json);
+      storage().set(STORAGE_KEYS.AUTH_SESSION, json);
     }
   } catch {
-    // SecureStore can throw if Keychain unavailable (e.g. simulator); ignore
+    if (session !== null) {
+      storage().set(STORAGE_KEYS.AUTH_SESSION, json);
+    } else {
+      storage().delete(STORAGE_KEYS.AUTH_SESSION);
+    }
   }
 }
 
@@ -104,7 +130,10 @@ export async function setSession(session: AuthSession | null): Promise<void> {
  * Does not remove ALL_NIGHTS, NIGHT_*, or APP_TOUR_SEEN.
  */
 export async function clearAllAuthData(): Promise<void> {
-  await setSession(null);
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_SESSION);
+  } catch {}
+  storage().delete(STORAGE_KEYS.AUTH_SESSION);
   const s = storage();
   s.delete(STORAGE_KEYS.AUTH_USERS);
   s.delete(STORAGE_KEYS.AUTH_ONBOARDING_DONE);

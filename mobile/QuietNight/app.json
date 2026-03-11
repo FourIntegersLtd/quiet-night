@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.fourintegers.QuietNight",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "QuietNight needs access to your microphone to monitor your snoring while you sleep."
+        "NSMicrophoneUsageDescription": "QuietNight needs access to your microphone to monitor your snoring while you sleep.",
+        "UIBackgroundModes": ["audio"]
       },
       "runtimeVersion": "1.0.0"
     },
@@ -54,7 +55,13 @@
           }
         }
       ],
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": true,
+          "enableBackgroundRecording": true
+        }
+      ],
       "expo-secure-store"
     ],
     "experiments": {

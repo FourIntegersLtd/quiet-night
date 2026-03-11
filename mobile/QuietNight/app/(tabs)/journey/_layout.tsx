@@ -28,6 +28,10 @@ export default function JourneyStack() {
       />
       <Stack.Screen name="epworth" options={{ title: "Daytime energy check" }} />
       <Stack.Screen name="lab" options={{ title: "Experiment Lab" }} />
+      <Stack.Screen
+        name="remedy/[remedyKey]"
+        options={{ title: "Experiment detail" }}
+      />
     </Stack>
   );
 }

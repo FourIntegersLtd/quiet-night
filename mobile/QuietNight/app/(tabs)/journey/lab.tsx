@@ -1,11 +1,13 @@
+import { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -25,14 +27,41 @@ import {
   MOCK_EXPERIMENT_NIGHTS,
   MOCK_LAB_OBJECTIVE,
   MOCK_LAB_SUBJECTIVE,
-  MOCK_NEXT_REMEDIES,
   getRemedyLabel,
 } from "@/data/mock-journey";
+import type { RemedyType } from "@/types";
+import { getRecommendationNext } from "@/lib/api";
+
+const FALLBACK_NEXT: { remedy_type: RemedyType; label: string; reason: string }[] = [
+  { remedy_type: "NASAL_STRIPS", label: "Nasal strips", reason: "A common first step to open nasal passages." },
+  { remedy_type: "SIDE_SLEEPING", label: "Side sleeping", reason: "Positional change helps many people." },
+];
 
 export default function ExperimentLabScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const alertApi = useAlert();
+  const [recommendation, setRecommendation] = useState<{
+    suggested_remedy: string | null;
+    reason: string;
+    alternatives: { remedy: string; reason: string }[];
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      setLoading(true);
+      getRecommendationNext().then((res) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (res.data) setRecommendation(res.data);
+        else setRecommendation(null);
+      });
+      return () => { cancelled = true; };
+    }, []),
+  );
+
   const experimentLabel = MOCK_CURRENT_EXPERIMENT
     ? getRemedyLabel(MOCK_CURRENT_EXPERIMENT.remedy_type)
     : "Current test";
@@ -40,11 +69,10 @@ export default function ExperimentLabScreen() {
   const obj = MOCK_LAB_OBJECTIVE;
   const sub = MOCK_LAB_SUBJECTIVE;
 
-  const handleStartTest = (remedyLabel: string) => {
-    alertApi.show({
-      title: "Start 7-Day Test",
-      message: `"${remedyLabel}" will be set as your next experiment. (Backend integration coming soon.)`,
-      buttons: [{ text: "OK" }],
+  const handleTryNext = (remedyType: string) => {
+    router.push({
+      pathname: "/(tabs)/tonight",
+      params: { remedy: remedyType },
     });
   };
 
@@ -84,28 +112,75 @@ export default function ExperimentLabScreen() {
         </View>
       </View>
 
-      {/* Next Move carousel */}
+      {/* Next Move carousel — from recommendation API (triggered at session end; also fetched here) */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>What's our next test?</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.carousel}
-        >
-          {MOCK_NEXT_REMEDIES.map((r) => (
-            <View key={r.remedy_type} style={styles.remedyCard}>
-              <Text style={styles.remedyLabel}>{r.label}</Text>
-              <Text style={styles.remedyDesc}>{r.description}</Text>
-              <TouchableOpacity
-                style={styles.startTestButton}
-                onPress={() => handleStartTest(r.label)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.startTestButtonText}>Start 7-Day Test</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-        </ScrollView>
+        {loading ? (
+          <View style={styles.remedyCard}>
+            <ActivityIndicator size="small" color={accent.teal} />
+            <Text style={styles.remedyDesc}>Loading suggestion…</Text>
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.carousel}
+          >
+            {recommendation ? (
+              <>
+                <View key={recommendation.suggested_remedy ?? "all-tried"} style={styles.remedyCard}>
+                  {recommendation.suggested_remedy ? (
+                    <>
+                      <Text style={styles.remedyLabel}>
+                        {getRemedyLabel(recommendation.suggested_remedy as RemedyType)}
+                      </Text>
+                      <Text style={styles.remedyDesc}>{recommendation.reason}</Text>
+                      <TouchableOpacity
+                        style={styles.startTestButton}
+                        onPress={() => handleTryNext(recommendation.suggested_remedy!)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.startTestButtonText}>Try tonight</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.remedyLabel}>You&apos;ve tried them all</Text>
+                      <Text style={styles.remedyDesc}>{recommendation.reason}</Text>
+                    </>
+                  )}
+                </View>
+                {recommendation.suggested_remedy && recommendation.alternatives?.slice(0, 2).map((alt) => (
+                  <View key={alt.remedy} style={styles.remedyCard}>
+                    <Text style={styles.remedyLabel}>{getRemedyLabel(alt.remedy as RemedyType)}</Text>
+                    <Text style={styles.remedyDesc}>{alt.reason}</Text>
+                    <TouchableOpacity
+                      style={styles.startTestButton}
+                      onPress={() => handleTryNext(alt.remedy)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.startTestButtonText}>Try tonight</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            ) : (
+              FALLBACK_NEXT.map((r) => (
+                <View key={r.remedy_type} style={styles.remedyCard}>
+                  <Text style={styles.remedyLabel}>{r.label}</Text>
+                  <Text style={styles.remedyDesc}>{r.reason}</Text>
+                  <TouchableOpacity
+                    style={styles.startTestButton}
+                    onPress={() => handleTryNext(r.remedy_type)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.startTestButtonText}>Try tonight</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        )}
       </View>
 
       {/* Epworth link */}

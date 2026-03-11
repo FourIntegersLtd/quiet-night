@@ -33,6 +33,9 @@ type OnboardingData = {
   first_name: string | null;
   role: UserRole;
   has_partner: boolean;
+  anonymous_id?: string | null;
+  weight_kg?: number | null;
+  height_cm?: number | null;
   onboarding_responses?: {
     attribution_source?: string | null;
     prior_app_usage?: string | null;
@@ -74,6 +77,10 @@ function meToStoredUser(me: MeResponse): StoredUser {
     first_name: me.first_name,
     created_at: new Date().toISOString(),
     password: "",
+    weight_kg: me.weight_kg ?? undefined,
+    height_cm: me.height_cm ?? undefined,
+    preferred_name: me.preferred_name ?? undefined,
+    partner_name: me.partner_name ?? undefined,
   };
 }
 
@@ -200,6 +207,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: data.role,
           onboarding_done: true,
           has_partner: data.has_partner,
+          anonymous_id: data.anonymous_id ?? undefined,
+          weight_kg: data.weight_kg ?? undefined,
+          height_cm: data.height_cm ?? undefined,
           onboarding_responses: data.onboarding_responses ?? undefined,
         });
         if (error) throw new Error(error.message ?? "Could not update profile.");
@@ -207,6 +217,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateUser(s.userId, {
           first_name: data.first_name,
           role: data.role,
+          weight_kg: data.weight_kg ?? undefined,
+          height_cm: data.height_cm ?? undefined,
         });
         setOnboardingDone(s.userId);
       }

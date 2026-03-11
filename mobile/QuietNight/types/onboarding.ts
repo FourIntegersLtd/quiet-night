@@ -55,6 +55,9 @@ export interface OnboardingAnswers {
   target_weeks?: number;
   /** Step 22: bedtime reminder time (e.g. "21:00") */
   bedtime_reminder_time?: string;
+  /** Step 25: body (for BMI) */
+  weight_kg?: number;
+  height_cm?: number;
 }
 
 /** Payload sent to POST /api/onboarding/complete or PATCH /api/me */
@@ -73,4 +76,6 @@ export interface OnboardingCompletionPayload {
   primary_goal?: PrimaryGoal;
   target_weeks?: number;
   bedtime_reminder_time?: string;
+  weight_kg?: number;
+  height_cm?: number;
 }

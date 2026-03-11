@@ -7,6 +7,8 @@ export interface SnoreEvent {
   confidence: number;
   timestamp: number;
   audioFileUri: string;
+  /** Clip length in seconds (from native when available). */
+  durationSeconds?: number;
 }
 
 /** Payload from native snore detector when a snore is detected. */
@@ -14,6 +16,7 @@ export interface SnoreDetectedPayload {
   confidence: number;
   timestamp: number;
   audioFileUri: string;
+  durationSeconds?: number;
 }
 
 /** Pre-flight system check status. */

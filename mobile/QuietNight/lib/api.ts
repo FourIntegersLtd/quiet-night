@@ -38,7 +38,7 @@ api.interceptors.request.use(
   (error) => {
     if (__DEV__) console.warn("[API] Request error", error?.message);
     return Promise.reject(error);
-  }
+  },
 );
 
 // Response: on 401, try refresh then retry; otherwise reject
@@ -48,13 +48,24 @@ api.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const originalRequest = error.config as typeof error.config & { _retry?: boolean };
+    const originalRequest = error.config as typeof error.config & {
+      _retry?: boolean;
+    };
 
     if (__DEV__) {
-      console.warn("[API] Response error", error.response?.status, error.response?.data, error.message);
+      console.warn(
+        "[API] Response error",
+        error.response?.status,
+        error.response?.data,
+        error.message,
+      );
     }
 
-    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry
+    ) {
       originalRequest._retry = true;
       try {
         const session = await getSession();
@@ -75,7 +86,8 @@ api.interceptors.response.use(
               refreshToken: data.session.refresh_token,
               expiresAt: data.session.expires_at,
             });
-            if (__DEV__) console.log("[API] Session refreshed, retrying request");
+            if (__DEV__)
+              console.log("[API] Session refreshed, retrying request");
             originalRequest.headers = originalRequest.headers || {};
             (originalRequest.headers as Record<string, string>).Authorization =
               `Bearer ${data.session.access_token}`;
@@ -83,19 +95,26 @@ api.interceptors.response.use(
           }
         }
         await clearAllAuthData();
-        if (__DEV__) console.warn("[API] Refresh failed or no refresh token, session cleared");
+        if (__DEV__)
+          console.warn(
+            "[API] Refresh failed or no refresh token, session cleared",
+          );
       } catch (refreshErr) {
         await clearAllAuthData();
         if (__DEV__) console.warn("[API] Refresh error", refreshErr);
       }
-      return Promise.reject(new Error("Session expired. Please sign in again."));
+      return Promise.reject(
+        new Error("Session expired. Please sign in again."),
+      );
     }
 
     if (error.code === "ECONNREFUSED" && __DEV__) {
-      console.warn(`[API] Connection refused. Is the backend running at ${API_BASE_URL}?`);
+      console.warn(
+        `[API] Connection refused. Is the backend running at ${API_BASE_URL}?`,
+      );
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 // --- Helpers: axios -> { data?, error? } shape ---
@@ -107,7 +126,9 @@ async function get<T>(path: string): Promise<{ data?: T; error?: ApiError }> {
     const err = e as AxiosError<{ detail?: unknown }>;
     const status = err.response?.status ?? 0;
     const message =
-      (err.response?.data && typeof err.response.data === "object" && "detail" in err.response.data
+      (err.response?.data &&
+      typeof err.response.data === "object" &&
+      "detail" in err.response.data
         ? String((err.response.data as { detail?: unknown }).detail)
         : null) ||
       err.message ||
@@ -116,7 +137,10 @@ async function get<T>(path: string): Promise<{ data?: T; error?: ApiError }> {
   }
 }
 
-async function post<T>(path: string, body?: unknown): Promise<{ data?: T; error?: ApiError }> {
+async function post<T>(
+  path: string,
+  body?: unknown,
+): Promise<{ data?: T; error?: ApiError }> {
   try {
     const res = await api.post<T>(path, body);
     return { data: res.data };
@@ -124,7 +148,9 @@ async function post<T>(path: string, body?: unknown): Promise<{ data?: T; error?
     const err = e as AxiosError<{ detail?: unknown }>;
     const status = err.response?.status ?? 0;
     const message =
-      (err.response?.data && typeof err.response.data === "object" && "detail" in err.response.data
+      (err.response?.data &&
+      typeof err.response.data === "object" &&
+      "detail" in err.response.data
         ? String((err.response.data as { detail?: unknown }).detail)
         : null) ||
       err.message ||
@@ -133,7 +159,10 @@ async function post<T>(path: string, body?: unknown): Promise<{ data?: T; error?
   }
 }
 
-async function patch<T>(path: string, body?: unknown): Promise<{ data?: T; error?: ApiError }> {
+async function patch<T>(
+  path: string,
+  body?: unknown,
+): Promise<{ data?: T; error?: ApiError }> {
   try {
     const res = await api.patch<T>(path, body);
     return { data: res.data };
@@ -141,7 +170,9 @@ async function patch<T>(path: string, body?: unknown): Promise<{ data?: T; error
     const err = e as AxiosError<{ detail?: unknown }>;
     const status = err.response?.status ?? 0;
     const message =
-      (err.response?.data && typeof err.response.data === "object" && "detail" in err.response.data
+      (err.response?.data &&
+      typeof err.response.data === "object" &&
+      "detail" in err.response.data
         ? String((err.response.data as { detail?: unknown }).detail)
         : null) ||
       err.message ||
@@ -191,7 +222,7 @@ export type RefreshSessionResponse = {
 
 export async function signInApi(
   email: string,
-  password: string
+  password: string,
 ): Promise<{ data?: SignInResponse; error?: ApiError }> {
   return post<SignInResponse>("/api/auth/signin", { email, password });
 }
@@ -199,7 +230,7 @@ export async function signInApi(
 export async function signUpApi(
   email: string,
   password: string,
-  full_name?: string | null
+  full_name?: string | null,
 ): Promise<{ data?: SignUpResponse; error?: ApiError }> {
   return post<SignUpResponse>("/api/auth/signup", {
     email,
@@ -216,7 +247,7 @@ export async function signOutApi(): Promise<{
 }
 
 export async function refreshSessionApi(
-  refresh_token: string
+  refresh_token: string,
 ): Promise<{ data?: RefreshSessionResponse; error?: ApiError }> {
   return post<RefreshSessionResponse>("/api/auth/refresh", { refresh_token });
 }
@@ -229,6 +260,8 @@ export type MeResponse = {
   role: string;
   first_name: string | null;
   onboarding_done: boolean;
+  weight_kg?: number | null;
+  height_cm?: number | null;
   connection: {
     id: string;
     sleeper_id: string;
@@ -236,6 +269,10 @@ export type MeResponse = {
     status: string;
     linked_at: string | null;
   } | null;
+  /** From onboarding: "what they'd like to be called" */
+  preferred_name?: string | null;
+  /** From onboarding: partner's name */
+  partner_name?: string | null;
 };
 
 export async function healthCheck(): Promise<{ status: string } | null> {
@@ -244,7 +281,10 @@ export async function healthCheck(): Promise<{ status: string } | null> {
   return data ?? null;
 }
 
-export async function getMe(): Promise<{ data?: MeResponse; error?: ApiError }> {
+export async function getMe(): Promise<{
+  data?: MeResponse;
+  error?: ApiError;
+}> {
   return get<MeResponse>("/api/me");
 }
 
@@ -253,6 +293,9 @@ export type UpdateMeBody = {
   role?: string | null;
   onboarding_done?: boolean | null;
   has_partner?: boolean | null;
+  anonymous_id?: string | null;
+  weight_kg?: number | null;
+  height_cm?: number | null;
   onboarding_responses?: {
     attribution_source?: string | null;
     prior_app_usage?: string | null;
@@ -267,9 +310,125 @@ export type UpdateMeBody = {
 };
 
 export async function updateMe(
-  body: UpdateMeBody
+  body: UpdateMeBody,
 ): Promise<{ data?: MeResponse; error?: ApiError }> {
   return patch<MeResponse>("/api/me", body);
+}
+
+// --- Sessions (each recording = experiment in DB for tip of the day / insights) ---
+export type SessionStartBody = {
+  night_key?: string;
+  remedy_type?: string | null;
+  is_shared_room_night?: boolean | null;
+  factors?: Record<string, unknown> | null;
+};
+
+export type SessionStartResponse = { id: string; night_key: string };
+
+export async function createSession(
+  body: SessionStartBody,
+): Promise<{ data?: SessionStartResponse; error?: ApiError }> {
+  return post<SessionStartResponse>("/api/sessions", body);
+}
+
+export async function endSession(
+  sessionId: string,
+  body: {
+    end_time?: string;
+    total_duration_minutes?: number;
+    snore_percentage?: number;
+    loud_snore_minutes?: number;
+  },
+): Promise<{ data?: { id: string }; error?: ApiError }> {
+  return patch<{ id: string }>(`/api/sessions/${sessionId}`, body);
+}
+
+export type SnoreEventInput = {
+  timestamp: number;
+  confidence: number;
+  audio_uri?: string | null;
+  duration_seconds?: number | null;
+};
+
+export async function appendSnores(
+  sessionId: string,
+  events: SnoreEventInput[],
+): Promise<{ data?: { appended: number }; error?: ApiError }> {
+  return post<{ appended: number }>(`/api/sessions/${sessionId}/snores`, {
+    events,
+  });
+}
+
+export type SessionListItem = {
+  id: string;
+  night_key: string;
+  remedy_type?: string | null;
+  loud_snore_minutes?: number | null;
+  partner_report?: string | null;
+  partner_note?: string | null;
+  created_at?: string;
+};
+
+export async function listSessions(params?: {
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+}): Promise<{ data?: SessionListItem[]; error?: ApiError }> {
+  const q = new URLSearchParams();
+  if (params?.date_from) q.set("date_from", params.date_from);
+  if (params?.date_to) q.set("date_to", params.date_to);
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const query = q.toString();
+  return get<SessionListItem[]>(`/api/sessions${query ? `?${query}` : ""}`);
+}
+
+export async function getSessionById(
+  sessionId: string,
+): Promise<{
+  data?: SessionListItem & { snores?: unknown[] };
+  error?: ApiError;
+}> {
+  return get(`/api/sessions/${sessionId}`);
+}
+
+// --- Epworth (backend is source of truth) ---
+export async function submitEpworth(
+  answers: number[],
+): Promise<{ data?: { id: string; total_score: number }; error?: ApiError }> {
+  return post<{ id: string; total_score: number }>("/api/epworth", { answers });
+}
+
+export type EpworthLatestResponse = {
+  id: string;
+  total_score: number;
+  answers_json: number[];
+  completed_at: string;
+};
+
+export async function getLatestEpworth(): Promise<{
+  data?: EpworthLatestResponse | null;
+  error?: ApiError;
+}> {
+  const res = await get<EpworthLatestResponse | Record<string, never>>(
+    "/api/epworth/latest",
+  );
+  if (res.error) return { error: res.error };
+  if (res.data && "id" in res.data && res.data.id)
+    return { data: res.data as EpworthLatestResponse };
+  return { data: null };
+}
+
+/** Submit onboarding anonymously (no auth). For user research; call when user reaches paywall. */
+export async function submitOnboardingAnonymous(
+  anonymous_id: string,
+  onboarding_responses: Record<string, unknown>,
+): Promise<{ ok?: boolean; error?: ApiError }> {
+  const res = await post<{ ok: boolean }>("/api/onboarding", {
+    anonymous_id,
+    onboarding_responses,
+  });
+  if (res.error) return { error: res.error };
+  return { ok: true };
 }
 
 // --- Night insights ---
@@ -283,9 +442,66 @@ export type NightInsightsRequest = {
 export type NightInsightsResponse = { summary: string };
 
 export async function getNightInsights(
-  body: NightInsightsRequest
+  body: NightInsightsRequest,
 ): Promise<{ data?: NightInsightsResponse; error?: ApiError }> {
   return post<NightInsightsResponse>("/api/insights/night", body);
+}
+
+// --- Night verdict (triggered when user ends recording) ---
+export type NightVerdictRequest = {
+  night_key: string;
+  snore_mins: number;
+  remedy?: string | null;
+  partner_report?: string | null;
+};
+
+export type NightVerdictResponse = {
+  verdict: "worked" | "unclear" | "didnt_work";
+  reason: string;
+  suggest_next: string | null;
+  suggest_next_reason: string | null;
+};
+
+export async function postNightVerdict(
+  body: NightVerdictRequest,
+): Promise<{ data?: NightVerdictResponse; error?: ApiError }> {
+  return post<NightVerdictResponse>("/api/insights/night-verdict", body);
+}
+
+/** Get stored verdict for a night from backend (source of truth). 404 if no verdict for that session. */
+export async function getNightVerdict(
+  night_key: string,
+): Promise<{ data?: NightVerdictResponse; error?: ApiError }> {
+  const encoded = encodeURIComponent(night_key);
+  return get<NightVerdictResponse>(`/api/insights/night-verdict?night_key=${encoded}`);
+}
+
+// --- Weekly summary (Journey "This week" card) ---
+export type WeeklySummaryResponse = {
+  summary: string;
+  snoring_change_pct: number | null;
+  top_remedy: string | null;
+};
+
+export async function getWeeklySummary(): Promise<{
+  data?: WeeklySummaryResponse;
+  error?: ApiError;
+}> {
+  return get<WeeklySummaryResponse>("/api/insights/weekly-summary");
+}
+
+// --- Recommendations (what to try next; Lab + cached at session end) ---
+export type RecommendationNextResponse = {
+  suggested_remedy: string | null;
+  reason: string;
+  alternatives: { remedy: string; reason: string }[];
+};
+
+export async function getRecommendationNext(): Promise<{
+  data?: RecommendationNextResponse;
+  error?: ApiError;
+}> {
+  return get<RecommendationNextResponse>("/api/recommendations/next");
 }
 
 // --- Personalized tip (Tonight screen) ---
@@ -298,6 +514,7 @@ export type PersonalizedTipRequest = {
   factors?: {
     alcohol_level?: string | null;
     congestion_level?: string | null;
+    room_result?: string | null;
     exhausted_today?: boolean | null;
     worked_out?: boolean | null;
     used_sedative?: boolean | null;
@@ -316,7 +533,7 @@ export type PersonalizedTipRequest = {
 export type PersonalizedTipResponse = { tip: string };
 
 export async function getPersonalizedTip(
-  body: PersonalizedTipRequest
+  body: PersonalizedTipRequest,
 ): Promise<{ data?: PersonalizedTipResponse; error?: ApiError }> {
   return post<PersonalizedTipResponse>("/api/insights/personalized-tip", body);
 }
@@ -336,7 +553,9 @@ export type BestRemedySummaryResponse = {
 };
 
 export async function getBestRemedySummary(
-  leaderboard: BestRemedyLeaderboardRow[]
+  leaderboard: BestRemedyLeaderboardRow[],
 ): Promise<{ data?: BestRemedySummaryResponse; error?: ApiError }> {
-  return post<BestRemedySummaryResponse>("/api/journey/best-remedy-summary", { leaderboard });
+  return post<BestRemedySummaryResponse>("/api/journey/best-remedy-summary", {
+    leaderboard,
+  });
 }

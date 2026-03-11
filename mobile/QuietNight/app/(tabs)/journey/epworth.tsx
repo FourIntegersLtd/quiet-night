@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   Text,
@@ -11,9 +11,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useAlert } from "@/contexts/AlertContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { PrimaryButton, GhostButton } from "@/components/ui/buttons";
 import { getStorage } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/constants/app";
+import { submitEpworth, getLatestEpworth } from "@/lib/api";
 import {
   accent,
   background,
@@ -95,20 +97,43 @@ function saveResult(result: EpworthResult): void {
 
 type ViewMode = "intro" | "form" | "result";
 
+function backendToResult(b: { total_score: number; answers_json: number[]; completed_at: string }): EpworthResult {
+  return {
+    totalScore: b.total_score,
+    answers: Array.isArray(b.answers_json) ? b.answers_json : [],
+    completedAt: b.completed_at,
+  };
+}
+
 export default function EpworthScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const alertApi = useAlert();
+  const { session } = useAuth();
 
   const [viewMode, setViewMode] = useState<ViewMode>("intro");
   const [formStep, setFormStep] = useState(0); // 0 = key, 1..8 = question index 0..7
   const [lastResult, setLastResult] = useState<EpworthResult | null>(null);
   const [answers, setAnswers] = useState<number[]>([0, 0, 0, 0, 0, 0, 0, 0]);
   const [result, setResult] = useState<EpworthResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const refreshLastResult = useCallback(async () => {
+    if (session?.accessToken) {
+      const { data } = await getLatestEpworth();
+      if (data) {
+        const r = backendToResult(data);
+        setLastResult(r);
+        saveResult(r); // cache locally
+        return;
+      }
+    }
+    setLastResult(loadLastResult());
+  }, [session?.accessToken]);
 
   useEffect(() => {
-    setLastResult(loadLastResult());
-  }, [viewMode]);
+    refreshLastResult();
+  }, [viewMode, refreshLastResult]);
 
   const totalScore = answers.reduce((a, b) => a + b, 0);
   const setAnswer = (index: number, value: number) => {
@@ -128,7 +153,7 @@ export default function EpworthScreen() {
     setFormStep(0);
     setAnswers([0, 0, 0, 0, 0, 0, 0, 0]);
   };
-  const handleFormNext = () => {
+  const handleFormNext = async () => {
     if (formStep < 8) setFormStep((s) => s + 1);
     else {
       const completedAt = new Date().toISOString();
@@ -137,7 +162,16 @@ export default function EpworthScreen() {
         answers: [...answers],
         completedAt,
       };
-      saveResult(res);
+      if (session?.accessToken) {
+        setSubmitting(true);
+        const { error } = await submitEpworth(res.answers);
+        setSubmitting(false);
+        if (error) {
+          alertApi.show({ title: "Could not save", message: error.message ?? "Please try again." });
+          return;
+        }
+      }
+      saveResult(res); // cache locally
       setResult(res);
       setViewMode("result");
     }
@@ -145,11 +179,11 @@ export default function EpworthScreen() {
   const handleFormBack = () => {
     if (formStep > 0) setFormStep((s) => s - 1);
   };
-  const handleDone = () => {
+  const handleDone = async () => {
     setViewMode("intro");
     setFormStep(0);
     setResult(null);
-    setLastResult(loadLastResult());
+    await refreshLastResult();
   };
 
   const handleGenerateReport = () => {
@@ -243,8 +277,9 @@ export default function EpworthScreen() {
               <View style={styles.navSpacer} />
             )}
             <PrimaryButton
-              label={formStep === 8 ? "See result" : "Continue"}
+              label={formStep === 8 ? (submitting ? "Saving…" : "See result") : "Continue"}
               onPress={handleFormNext}
+              disabled={submitting}
             />
           </View>
         </ScrollView>

@@ -1,11 +1,22 @@
 /**
  * Persist and load onboarding answers.
- * Builds API payload for POST /api/onboarding/complete.
+ * Builds API payload for POST /api/onboarding and PATCH /api/me.
  */
 
 import { getStorage } from "./storage";
 import { STORAGE_KEYS } from "@/constants/app";
 import type { OnboardingAnswers, OnboardingCompletionPayload } from "@/types/onboarding";
+
+/** Get or create a stable anonymous id for onboarding (saved to DB before account creation). */
+export function getOrCreateOnboardingAnonymousId(): string {
+  const storage = getStorage();
+  let id = storage.getString(STORAGE_KEYS.ONBOARDING_ANONYMOUS_ID);
+  if (!id) {
+    id = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    storage.set(STORAGE_KEYS.ONBOARDING_ANONYMOUS_ID, id);
+  }
+  return id;
+}
 
 export function loadOnboardingAnswers(): OnboardingAnswers {
   const storage = getStorage();
@@ -42,5 +53,7 @@ export function buildOnboardingPayload(answers: OnboardingAnswers): OnboardingCo
     primary_goal: answers.primary_goal,
     target_weeks: answers.target_weeks,
     bedtime_reminder_time: answers.bedtime_reminder_time,
+    weight_kg: answers.weight_kg,
+    height_cm: answers.height_cm,
   };
 }

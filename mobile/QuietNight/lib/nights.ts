@@ -3,13 +3,13 @@
  */
 
 import { STORAGE_KEYS, nightKey } from "@/constants/app";
-import type { SnoreEvent } from "@/types";
+import type { SnoreEvent, RoomNoiseResult } from "@/types";
 import type { RemedyType, AlcoholLevel, CongestionLevel } from "@/types";
 import { getStorage } from "./storage";
 import { parseNightKey, formatDateLabel } from "./formatters";
 
-/** Seconds per snore event for estimated "loud snoring" duration (matches morning screen). */
-const SECONDS_PER_SNORE = 30;
+/** Seconds per snore event for estimated snoring duration. Must match morning screen (5s) and journey so all screens show the same value. */
+const SECONDS_PER_SNORE = 5;
 
 export function getAllNightKeys(): string[] {
   const raw = getStorage().getString(STORAGE_KEYS.ALL_NIGHTS);
@@ -47,9 +47,9 @@ function getPeakTimeLabel(events: SnoreEvent[]): string {
   }
   if (maxCount === 0) return "—";
   const fmt = (h: number) => {
-    if (h === 0) return "12a";
-    if (h === 12) return "12p";
-    return h < 12 ? `${h}a` : `${h - 12}p`;
+    if (h === 0) return "12am";
+    if (h === 12) return "12pm";
+    return h < 12 ? `${h}am` : `${h - 12}pm`;
   };
   return `${fmt(peakStart)}–${fmt(peakStart + 1)}`;
 }
@@ -125,25 +125,55 @@ export function setNightRemedy(key: string, remedies: RemedyType[]): void {
 /** Partner report for a night: good = slept well, bad = exhausted. */
 export type PartnerReport = "good" | "bad";
 
-/** Get stored partner report for a night (set from morning screen). */
+export type PartnerCheckInData = {
+  report: PartnerReport;
+  note?: string | null;
+};
+
+function parsePartnerValue(v: unknown): PartnerReport | null {
+  if (v === "good" || v === "bad") return v;
+  if (v && typeof v === "object" && "report" in v) {
+    const r = (v as { report: string }).report;
+    return r === "good" || r === "bad" ? r : null;
+  }
+  return null;
+}
+
+/** Get stored partner report for a night (set from Journey sync or morning). */
 export function getNightPartnerReport(key: string): PartnerReport | null {
+  const data = getNightPartnerData(key);
+  return data?.report ?? null;
+}
+
+/** Get partner check-in for a night (report + optional note). For night detail card. */
+export function getNightPartnerData(key: string): PartnerCheckInData | null {
   const raw = getStorage().getString(STORAGE_KEYS.NIGHT_PARTNER_REPORTS);
   if (!raw) return null;
   try {
     const map: unknown = JSON.parse(raw);
     if (map && typeof map === "object" && key in map) {
-      const v = (map as Record<string, string>)[key];
-      return v === "good" || v === "bad" ? v : null;
+      const v = (map as Record<string, unknown>)[key];
+      const report = parsePartnerValue(v);
+      if (!report) return null;
+      const note =
+        v && typeof v === "object" && "note" in v && typeof (v as { note: unknown }).note === "string"
+          ? (v as { note: string }).note
+          : null;
+      return { report, note: note || null };
     }
   } catch {}
   return null;
 }
 
-/** Set partner report for a night (call from morning screen). */
-export function setNightPartnerReport(key: string, report: PartnerReport): void {
+/** Set partner check-in for a night (report + optional note). Called from Journey sync. */
+export function setNightPartnerReport(
+  key: string,
+  report: PartnerReport,
+  note?: string | null
+): void {
   const raw = getStorage().getString(STORAGE_KEYS.NIGHT_PARTNER_REPORTS);
-  const map: Record<string, string> = raw ? JSON.parse(raw) : {};
-  map[key] = report;
+  const map: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+  map[key] = note?.trim() ? { report, note: note.trim() } : { report };
   getStorage().set(STORAGE_KEYS.NIGHT_PARTNER_REPORTS, JSON.stringify(map));
 }
 
@@ -151,6 +181,8 @@ export function setNightPartnerReport(key: string, report: PartnerReport): void 
 export type NightFactors = {
   alcohol_level: AlcoholLevel;
   congestion_level: CongestionLevel;
+  /** Pre-flight room calibration (baseline); shown on night detail. */
+  room_result?: RoomNoiseResult;
   exhausted_today?: boolean;
   worked_out?: boolean;
   used_sedative?: boolean;
@@ -169,6 +201,8 @@ export type NightFactors = {
   pre_sleep_other?: string[];
   /** Sleep sound chosen in pre-flight; plays only when tracking is active */
   sleep_sound?: "none" | "rain" | "stream" | "white_noise";
+  /** Minutes to play sleep sound before tracking starts (0 = start immediately). */
+  wind_down_minutes?: number;
 };
 
 /** Get stored factors for a night. */
@@ -229,6 +263,25 @@ export function getRecordingTimes(key: string): RecordingTimes | null {
   }
 }
 
+/** Backend session id for a night (when user is logged in; used to sync session + snores to DB). */
+export function getSessionIdForNight(key: string): string | null {
+  const raw = getStorage().getString(STORAGE_KEYS.NIGHT_SESSION_IDS);
+  if (!raw) return null;
+  try {
+    const map: Record<string, string> = JSON.parse(raw);
+    return map[key] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionIdForNight(key: string, sessionId: string): void {
+  const raw = getStorage().getString(STORAGE_KEYS.NIGHT_SESSION_IDS);
+  const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+  map[key] = sessionId;
+  getStorage().set(STORAGE_KEYS.NIGHT_SESSION_IDS, JSON.stringify(map));
+}
+
 /** Time-in-bed and snoring stats for a night (for night detail screen). */
 export function getNightTimeStats(key: string): {
   totalMinutes: number;
@@ -237,7 +290,7 @@ export function getNightTimeStats(key: string): {
 } {
   const events = getNightSnores(key);
   const snoringSeconds = events.length * SECONDS_PER_SNORE;
-  const snoringMinutes = events.length > 0 ? Math.max(1, Math.round(snoringSeconds / 60)) : 0;
+  const snoringMinutes = events.length > 0 ? Math.round(snoringSeconds / 60) : 0;
   if (events.length === 0) {
     const times = getRecordingTimes(key);
     if (times?.stoppedAt) {

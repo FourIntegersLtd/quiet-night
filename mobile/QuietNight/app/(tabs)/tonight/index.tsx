@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import PartnerVector from "@/assets/images/vectors/partner-vector.svg";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -22,9 +22,15 @@ import {
   getTodayNightKey,
   getNightFactors,
   getNightRemedy,
+  setNightRemedy,
+  getNightTimeStats,
 } from "@/lib/nights";
+import { getExperimentStreak } from "@/lib/journey-data";
+import { clearWavRecordingsOlderThanDays } from "@/lib/recordings";
+import { PreflightWarningsModal } from "@/components/PreflightWarningsModal";
 import { getPersonalizedTip } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import type { RemedyType } from "@/types";
 import {
   getPartnerCheckInUrl,
   PARTNER_CHECKIN_SHARE_MESSAGE,
@@ -46,10 +52,19 @@ const PARTNER_ILLUSTRATION_HEIGHT = 120;
 
 export default function TonightScreen() {
   const router = useRouter();
+  const { remedy: remedyParam } = useLocalSearchParams<{ remedy?: string }>();
   const { width: windowWidth } = useWindowDimensions();
   const { user } = useAuth();
-  const partnerName = "Sarah";
-  const firstName = user?.first_name ?? "there";
+
+  // Prefill tonight's remedy when opened from Lab "Try tonight" with a suggestion
+  useEffect(() => {
+    if (remedyParam && remedyParam.trim()) {
+      const key = getTodayNightKey();
+      setNightRemedy(key, [remedyParam.trim() as RemedyType]);
+    }
+  }, [remedyParam]);
+  const firstName = user?.preferred_name ?? user?.first_name ?? "there";
+  const partnerName = (user?.partner_name ?? "").trim() || "Partner";
 
   const [partnerInSameRoom, setPartnerInSameRoom] = useState(false);
   const [roomChoiceEditing, setRoomChoiceEditing] = useState(true);
@@ -58,9 +73,31 @@ export default function TonightScreen() {
     micStatus,
     storageMB,
     batteryStatus,
-    batteryPct,
-    isPluggedIn,
+    showLowBatteryWarning,
+    showLowStorageWarning,
+    runStorageCheck,
   } = useSystemChecks();
+
+  const [warningsModalDismissed, setWarningsModalDismissed] = useState(false);
+  const [userOpenedPreflightWarnings, setUserOpenedPreflightWarnings] = useState(false);
+  const [clearOldRecordingsLoading, setClearOldRecordingsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showLowBatteryWarning && !showLowStorageWarning) {
+      setWarningsModalDismissed(false);
+      setUserOpenedPreflightWarnings(false);
+    }
+  }, [showLowBatteryWarning, showLowStorageWarning]);
+
+  const handleClearOldRecordings = () => {
+    setClearOldRecordingsLoading(true);
+    try {
+      clearWavRecordingsOlderThanDays(7);
+      runStorageCheck();
+    } finally {
+      setClearOldRecordingsLoading(false);
+    }
+  };
 
   const hasStorage =
     storageMB === null || storageMB >= PREFLIGHT_MIN_STORAGE_MB;
@@ -84,9 +121,10 @@ export default function TonightScreen() {
     }
   };
 
-  const hasPartner = true;
+  const hasPartner = !!user?.partner_name?.trim();
   const [lastNightSummary, setLastNightSummary] = useState<ReturnType<typeof getLastNightSummary>>(null);
   const [personalizedTip, setPersonalizedTip] = useState<string | null>(null);
+  const experimentStreak = getExperimentStreak();
   const [tipLoading, setTipLoading] = useState(true);
   const illustrationWrapWidth = windowWidth;
   const illustrationWrapMarginLeft = -(spacing.screenPadding + spacing.cardPadding);
@@ -120,6 +158,7 @@ export default function TonightScreen() {
         ? {
             alcohol_level: factors.alcohol_level ?? undefined,
             congestion_level: factors.congestion_level ?? undefined,
+            room_result: factors.room_result ?? undefined,
             exhausted_today: factors.exhausted_today ?? undefined,
             worked_out: factors.worked_out ?? undefined,
             used_sedative: factors.used_sedative ?? undefined,
@@ -150,7 +189,25 @@ export default function TonightScreen() {
     if (w > 0) setIllustrationWidth(w);
   };
 
+  const showWarningsModal =
+    (showLowBatteryWarning || showLowStorageWarning) &&
+    !warningsModalDismissed &&
+    userOpenedPreflightWarnings;
+
   return (
+    <>
+      <PreflightWarningsModal
+        visible={showWarningsModal}
+        onDismiss={() => {
+          setWarningsModalDismissed(true);
+          setUserOpenedPreflightWarnings(false);
+        }}
+        lowBattery={showLowBatteryWarning}
+        lowStorage={showLowStorageWarning}
+        onClearOldRecordings={handleClearOldRecordings}
+        onOpenProfile={() => router.push("/(tabs)/profile")}
+        clearOldRecordingsLoading={clearOldRecordingsLoading}
+      />
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -158,21 +215,26 @@ export default function TonightScreen() {
     >
         <Text style={styles.greeting}>Good evening, {firstName}</Text>
         <Text style={styles.greetingSub}>Tap to start recording</Text>
+        {experimentStreak.current >= 2 && (
+          <View style={styles.streakPill}>
+            <Text style={styles.streakPillText}>
+              {experimentStreak.current}-night streak
+            </Text>
+          </View>
+        )}
 
-        <TouchableOpacity
-          style={styles.morningSummaryLink}
-          onPress={() =>
-            router.push({
-              pathname: "/(tabs)/tonight/morning",
-              params: getLastNightKey() ? { sessionId: getLastNightKey()! } : {},
-            })
-          }
-          activeOpacity={0.8}
-        >
-          <Text style={styles.morningSummaryLinkText}>Morning summary</Text>
-          <Ionicons name="chevron-forward" size={16} color={accent.teal} style={styles.morningSummaryChevron} />
-        </TouchableOpacity>
-
+        {!canStart && (showLowBatteryWarning || showLowStorageWarning) && (
+          <TouchableOpacity
+            style={styles.howToFixWrap}
+            onPress={() => {
+              setWarningsModalDismissed(false);
+              setUserOpenedPreflightWarnings(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.howToFixText}>Having trouble? How to fix →</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[styles.recordCtaTouchable, !canStart && styles.recordCtaDisabled]}
           onPress={() => router.push("/(tabs)/tonight/wizard")}
@@ -195,6 +257,68 @@ export default function TonightScreen() {
           </LinearGradient>
         </TouchableOpacity>
 
+      {/* Your last night (no partner): above tip, more details, no icon */}
+      {!hasPartner && (
+        <View style={[styles.card, styles.lastNightCard]}>
+          <Text style={styles.lastNightTitle}>Your last night</Text>
+          {lastNightSummary ? (
+            <>
+              <Text style={styles.lastNightDate}>{lastNightSummary.dateLabel}</Text>
+              <View style={styles.lastNightRow}>
+                <Text style={styles.lastNightStat}>
+                  <Text style={styles.lastNightStatValue}>{lastNightSummary.loudMins}</Text> mins loud snoring
+                </Text>
+                {lastNightSummary.peakTime !== "—" && (
+                  <Text style={styles.lastNightStat}>
+                    Peak <Text style={styles.lastNightStatValue}>{lastNightSummary.peakTime}</Text>
+                  </Text>
+                )}
+              </View>
+              {(() => {
+                const key = getLastNightKey();
+                if (!key) return null;
+                const stats = getNightTimeStats(key);
+                if (stats.totalMinutes <= 0) return null;
+                return (
+                  <View style={styles.lastNightRow}>
+                    <Text style={styles.lastNightStat}>
+                      <Text style={styles.lastNightStatValue}>{stats.totalMinutes}</Text> min in bed
+                    </Text>
+                    {stats.snoringPercent > 0 && (
+                      <Text style={styles.lastNightStat}>
+                        <Text style={styles.lastNightStatValue}>{Math.round(stats.snoringPercent)}%</Text> snoring
+                      </Text>
+                    )}
+                    {lastNightSummary.eventCount > 0 && (
+                      <Text style={styles.lastNightStat}>
+                        <Text style={styles.lastNightStatValue}>{lastNightSummary.eventCount}</Text> events
+                      </Text>
+                    )}
+                  </View>
+                );
+              })()}
+              <TouchableOpacity
+                style={styles.lastNightSeeDetails}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(tabs)/tonight/morning",
+                    params: getLastNightKey() ? { sessionId: getLastNightKey()! } : {},
+                  })
+                }
+                activeOpacity={0.8}
+              >
+                <Text style={styles.lastNightSeeDetailsText}>See details</Text>
+                <Ionicons name="chevron-forward" size={16} color={accent.teal} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <Text style={styles.lastNightEmpty}>
+              When you complete a night, your morning summary will appear here so you can see how you did and compare over time.
+            </Text>
+          )}
+        </View>
+      )}
+
         <View style={[styles.card, styles.tipCard]}>
           <View style={styles.tipHeader}>
             <Ionicons name="bulb-outline" size={20} color={accent.primary} />
@@ -211,28 +335,9 @@ export default function TonightScreen() {
               "Keeping a consistent bedtime helps your body clock. Try to go to bed within the same 30-minute window each night."}
           </Text>
           )}
-          <View style={styles.tipFooter}>
-            <TouchableOpacity
-              style={styles.lastNightButton}
-              onPress={() => {
-                const key = getLastNightKey();
-                if (key) router.push({ pathname: "/(tabs)/nights/[key]", params: { key } });
-                else router.push("/(tabs)/nights");
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="moon-outline" size={16} color={accent.primary} />
-              <Text style={styles.lastNightButtonText}>
-                {lastNightSummary
-                  ? `Last night${lastNightSummary.loudMins != null ? ` · ${lastNightSummary.loudMins}m` : ""}`
-                  : "Last night"}
-              </Text>
-              <Ionicons name="chevron-forward" size={14} color={text.muted} />
-            </TouchableOpacity>
-          </View>
         </View>
 
-      {/* Partner check-in at top (only if user has a partner) */}
+      {/* Partner check-in (only if user has a partner) */}
       {hasPartner && (
         <View style={[styles.card, styles.partnerCard]}>
           <View
@@ -320,39 +425,8 @@ export default function TonightScreen() {
         </View>
       )}
 
-      {/* No partner: show last night's morning summary so they have context */}
-      {!hasPartner && (
-        <View style={[styles.card, styles.lastNightCard]}>
-          <View style={styles.lastNightHeader}>
-            <Ionicons name="moon-outline" size={22} color={accent.teal} />
-            <Text style={styles.lastNightTitle}>Your last night</Text>
-          </View>
-          {lastNightSummary ? (
-            <>
-              <Text style={styles.lastNightDate}>{lastNightSummary.dateLabel}</Text>
-              <View style={styles.lastNightRow}>
-                <Text style={styles.lastNightStat}>
-                  <Text style={styles.lastNightStatValue}>{lastNightSummary.loudMins}</Text> mins loud snoring
-                </Text>
-                {lastNightSummary.peakTime !== "—" && (
-                  <Text style={styles.lastNightStat}>
-                    Peak <Text style={styles.lastNightStatValue}>{lastNightSummary.peakTime}</Text>
-                  </Text>
-                )}
-              </View>
-              <Text style={styles.lastNightSub}>
-                From your morning summary. Track tonight to see how it compares.
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.lastNightEmpty}>
-              When you complete a night, your morning summary will appear here so you can see how you did and compare over time.
-            </Text>
-          )}
-        </View>
-      )}
-
     </ScrollView>
+    </>
   );
 }
 
@@ -374,6 +448,21 @@ const styles = StyleSheet.create({
     color: text.secondary,
     marginBottom: spacing.md,
   },
+  streakPill: {
+    alignSelf: "flex-start",
+    backgroundColor: accent.tealSoft,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+    marginBottom: spacing.sm,
+  },
+  streakPillText: {
+    ...type.bodySmall,
+    fontFamily: fonts.bodyMedium,
+    color: accent.teal,
+  },
+  howToFixWrap: { marginBottom: spacing.xs },
+  howToFixText: { ...type.bodyMd, color: accent.primary },
   recordCtaTouchable: {
     borderRadius: radius.xl,
     marginBottom: spacing.lg,
@@ -503,15 +592,10 @@ const styles = StyleSheet.create({
     backgroundColor: accent.tealSoft,
     borderColor: accent.tealGlow,
   },
-  lastNightHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.stackSm,
-  },
   lastNightTitle: {
     ...type.titleCard,
     color: text.primary,
-    marginLeft: spacing.stackSm,
+    marginBottom: spacing.stackSm,
   },
   lastNightDate: {
     ...type.bodySmall,
@@ -532,10 +616,17 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyMedium,
     color: accent.teal,
   },
-  lastNightSub: {
+  lastNightSeeDetails: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    marginTop: spacing.stackSm,
+  },
+  lastNightSeeDetailsText: {
     ...type.bodySmall,
-    color: text.secondary,
-    lineHeight: 20,
+    fontFamily: fonts.bodyMedium,
+    color: accent.teal,
   },
   lastNightEmpty: {
     ...type.bodySmall,
@@ -604,17 +695,4 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyMedium,
     color: accent.primary,
   },
-
-  morningSummaryLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    marginBottom: spacing.md,
-  },
-  morningSummaryLinkText: {
-    ...type.bodyMd,
-    fontFamily: fonts.bodyMedium,
-    color: accent.teal,
-  },
-  morningSummaryChevron: { marginLeft: 2 },
 });

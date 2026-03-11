@@ -18,6 +18,12 @@ export function formatTime(unixTime: number): string {
   });
 }
 
+/** Short time for episode ranges (e.g. "10:20 PM"). */
+export function formatTimeShort(unixTime: number): string {
+  const date = new Date(unixTime * 1000);
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 /** Format night key as long date (e.g. "Wednesday, March 4, 2026"). */
 export function formatDateFromKey(key: string): string {
   const dateStr = parseNightKey(key);

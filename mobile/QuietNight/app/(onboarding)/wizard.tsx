@@ -1586,19 +1586,67 @@ function Step22Notifications() {
 }
 
 function Step23Health() {
+  const { answers, setAnswer } = useOnboarding();
+  const [weightInput, setWeightInput] = useState(
+    answers.weight_kg != null && answers.weight_kg > 0 ? String(answers.weight_kg) : ""
+  );
+  const [heightInput, setHeightInput] = useState(
+    answers.height_cm != null && answers.height_cm > 0 ? String(answers.height_cm) : ""
+  );
+
+  const handleWeightChange = (t: string) => {
+    setWeightInput(t);
+    const n = parseFloat(t.replace(",", "."));
+    if (Number.isFinite(n) && n > 0 && n < 300) setAnswer("weight_kg", Math.round(n * 10) / 10);
+    else if (t.trim() === "") setAnswer("weight_kg", undefined);
+  };
+
+  const handleHeightChange = (t: string) => {
+    setHeightInput(t);
+    const n = parseFloat(t.replace(",", "."));
+    if (Number.isFinite(n) && n > 0 && n < 250) setAnswer("height_cm", Math.round(n));
+    else if (t.trim() === "") setAnswer("height_cm", undefined);
+  };
+
   return (
     <>
       <AnimatedStepItem index={0}>
-        <Text style={styles.headline}>Connect with Apple Health</Text>
+        <Text style={styles.headline}>Weight & height</Text>
       </AnimatedStepItem>
       <AnimatedStepItem index={1}>
         <Text style={styles.subtext}>
-          QuietNight can read your sleep data from Apple Health — total sleep time, heart rate, and more — to give you even richer insights and correlate with your snoring data. Totally optional.
+          We use this to calculate your BMI and personalise insights. You can change it anytime in Profile.
         </Text>
       </AnimatedStepItem>
       <AnimatedStepItem index={2}>
+        <View style={styles.bodyFormRow}>
+          <View style={styles.bodyFormField}>
+            <Text style={styles.bodyFormLabel}>Weight (kg)</Text>
+            <TextInput
+              style={styles.bodyFormInput}
+              placeholder="e.g. 72"
+              placeholderTextColor={text.muted}
+              value={weightInput}
+              onChangeText={handleWeightChange}
+              keyboardType="decimal-pad"
+            />
+          </View>
+          <View style={styles.bodyFormField}>
+            <Text style={styles.bodyFormLabel}>Height (cm)</Text>
+            <TextInput
+              style={styles.bodyFormInput}
+              placeholder="e.g. 175"
+              placeholderTextColor={text.muted}
+              value={heightInput}
+              onChangeText={handleHeightChange}
+              keyboardType="decimal-pad"
+            />
+          </View>
+        </View>
+      </AnimatedStepItem>
+      <AnimatedStepItem index={3}>
         <Text style={styles.supporting}>
-          Skip for now if you prefer; you can connect later in Settings.
+          Optional — skip if you prefer; you can add it later in Profile.
         </Text>
       </AnimatedStepItem>
     </>
@@ -1980,6 +2028,27 @@ const styles = StyleSheet.create({
     ...type.bodyLg,
     fontFamily: fonts.headingSemi,
     color: background.primary,
+  },
+  bodyFormRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginVertical: spacing.sm,
+  },
+  bodyFormField: { flex: 1 },
+  bodyFormLabel: {
+    ...type.label,
+    color: text.secondary,
+    marginBottom: 4,
+  },
+  bodyFormInput: {
+    ...type.body,
+    color: text.primary,
+    backgroundColor: background.input,
+    borderRadius: radius.input,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
   },
   modalOverlay: {
     flex: 1,

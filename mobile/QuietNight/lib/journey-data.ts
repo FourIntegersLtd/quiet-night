@@ -8,8 +8,9 @@ import {
   getNightSnores,
   getNightRemedy,
   getNightPartnerReport,
+  getNightTimeStats,
 } from "@/lib/nights";
-import { parseNightKey } from "@/lib/formatters";
+import { parseNightKey, formatDateLabel } from "@/lib/formatters";
 import type { RemedyType } from "@/types";
 
 const SECONDS_PER_SNORE = 5;
@@ -84,6 +85,7 @@ export function getLast7DaysJourneyData(): JourneyDay[] {
 
 export type LeaderboardRow = {
   remedy: string;
+  remedyKey: RemedyType;
   nights: number;
   reduction: number | null;
   avgMins?: number;
@@ -146,6 +148,7 @@ export function getLeaderboardFromRealData(): LeaderboardRow[] {
     }
     rows.push({
       remedy: REMEDY_LABELS[remedy],
+      remedyKey: remedy,
       nights,
       reduction,
       avgMins: remedy === "BASELINE" ? Math.round(avgMins) : undefined,
@@ -161,6 +164,92 @@ export function getLeaderboardFromRealData(): LeaderboardRow[] {
     return rB - rA;
   });
   return rows;
+}
+
+/** Per-night entry for remedy detail. */
+export type RemedyNightEntry = {
+  nightKey: string;
+  dateLabel: string;
+  loudMins: number;
+  partnerReport: "good" | "bad" | null;
+  totalMinutes: number;
+  eventCount: number;
+};
+
+/** Full detail for one remedy (for detail page). */
+export type RemedyDetail = {
+  remedyKey: RemedyType;
+  remedyLabel: string;
+  nights: number;
+  avgMins: number;
+  reduction: number | null;
+  baselineAvg: number | null;
+  isWarning: boolean;
+  nightsDetail: RemedyNightEntry[];
+  totalSnoreEvents: number;
+  bestNightMins: number;
+  worstNightMins: number;
+};
+
+/** Get all stats and per-night breakdown for a remedy. */
+export function getRemedyDetail(remedyKey: RemedyType): RemedyDetail | null {
+  const keys = getAllNightKeys();
+  const byRemedy: Record<string, { mins: number[]; keys: string[] }> = {};
+  for (const key of keys) {
+    const remedies = getNightRemedy(key);
+    const rKey = remedies.length ? remedies.slice().sort().join(",") : "BASELINE";
+    const events = getNightSnores(key);
+    const mins = loudMinsFromEvents(events.length);
+    if (!byRemedy[rKey]) byRemedy[rKey] = { mins: [], keys: [] };
+    byRemedy[rKey].mins.push(mins);
+    byRemedy[rKey].keys.push(key);
+  }
+  const data = byRemedy[remedyKey];
+  if (!data || data.mins.length === 0) return null;
+  const baselineMins = byRemedy.BASELINE?.mins ?? [];
+  const baselineAvg =
+    baselineMins.length > 0
+      ? baselineMins.reduce((a, b) => a + b, 0) / baselineMins.length
+      : null;
+  const nights = data.mins.length;
+  const avgMins = data.mins.reduce((a, b) => a + b, 0) / nights;
+  let reduction: number | null = null;
+  if (remedyKey !== "BASELINE" && baselineAvg != null && baselineAvg > 0) {
+    reduction = Math.round(((baselineAvg - avgMins) / baselineAvg) * 100);
+  }
+  const isWarning = remedyKey !== "BASELINE" && nights === 1 && (reduction == null || reduction <= 0);
+  let totalSnoreEvents = 0;
+  const nightsDetail: RemedyNightEntry[] = data.keys.map((key, i) => {
+    const events = getNightSnores(key);
+    const eventCount = events.length;
+    totalSnoreEvents += eventCount;
+    const stats = getNightTimeStats(key);
+    const partnerReport = getNightPartnerReport(key);
+    return {
+      nightKey: key,
+      dateLabel: formatDateLabel(parseNightKey(key)),
+      loudMins: data.mins[i] ?? 0,
+      partnerReport: getNightPartnerReport(key),
+      totalMinutes: stats.totalMinutes,
+      eventCount,
+    };
+  });
+  const minsArr = data.mins;
+  const bestNightMins = minsArr.length ? Math.min(...minsArr) : 0;
+  const worstNightMins = minsArr.length ? Math.max(...minsArr) : 0;
+  return {
+    remedyKey,
+    remedyLabel: REMEDY_LABELS[remedyKey],
+    nights,
+    avgMins: Math.round(avgMins * 10) / 10,
+    reduction,
+    baselineAvg: baselineAvg != null ? Math.round(baselineAvg * 10) / 10 : null,
+    isWarning,
+    nightsDetail,
+    totalSnoreEvents,
+    bestNightMins,
+    worstNightMins,
+  };
 }
 
 export type WinningRemedy = {
@@ -181,6 +270,68 @@ export function getWinningRemedyFromRealData(): WinningRemedy {
     reductionPercent: best.reduction,
     nights: best.nights,
   };
+}
+
+/** Consecutive experiment nights (calendar days with a completed night, counting back from yesterday). */
+export function getExperimentStreak(): { current: number; longest: number } {
+  const keys = getAllNightKeys();
+  if (keys.length === 0) return { current: 0, longest: 0 };
+  const keySet = new Set(keys.map((k) => (k.startsWith("night_") ? k.replace("night_", "") : k)));
+  const today = new Date().toISOString().split("T")[0];
+  let current = 0;
+  for (let i = 1; i <= 365; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    if (keySet.has(dateStr)) current++;
+    else break;
+  }
+  let longest = current;
+  let run = 0;
+  for (let i = 1; i <= 365; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    if (keySet.has(dateStr)) {
+      run++;
+      longest = Math.max(longest, run);
+    } else {
+      run = 0;
+    }
+  }
+  return { current, longest };
+}
+
+/** Optional one-line celebration for morning screen when last night was notably good (e.g. quietest in N nights). */
+export function getMorningCelebration(
+  nightKey: string,
+  lastNightSnoreMins: number,
+): { message: string } | null {
+  const keys = getAllNightKeys();
+  const sorted = [...keys].sort().reverse();
+  const dateStr = nightKey.startsWith("night_") ? nightKey.replace("night_", "") : nightKey;
+  const previousNights = sorted.filter((k) => {
+    const s = k.startsWith("night_") ? k.replace("night_", "") : k;
+    return s < dateStr;
+  });
+  if (previousNights.length < 2) return null;
+  const previousMins = previousNights.slice(0, 14).map((key) => {
+    const events = getNightSnores(key);
+    return loudMinsFromEvents(events.length);
+  });
+  let quietestIn = 0;
+  for (let i = 0; i < previousMins.length; i++) {
+    if (lastNightSnoreMins < previousMins[i]) quietestIn++;
+    else break;
+  }
+  if (quietestIn >= 2) {
+    return { message: `Last night was your quietest in ${quietestIn + 1} nights 🎉` };
+  }
+  const lastThree = previousMins.slice(0, 3);
+  if (lastThree.length >= 2 && lastThree.every((m) => lastNightSnoreMins < m)) {
+    return { message: "Fewer snoring minutes than your last 3 nights — nice one." };
+  }
+  return null;
 }
 
 /** Simple milestone progress from night count (for path). */

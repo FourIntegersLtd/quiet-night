@@ -6,7 +6,7 @@ import {
 import { Paths } from "expo-file-system";
 import * as Battery from "expo-battery";
 
-import { LOW_STORAGE_MB, MB } from "@/constants/app";
+import { LOW_STORAGE_MB, MB, PREFLIGHT_MIN_STORAGE_MB, BATTERY_WARNING_PCT } from "@/constants/app";
 import type { CheckStatus } from "@/types";
 
 export function useSystemChecks() {
@@ -16,6 +16,14 @@ export function useSystemChecks() {
   const [batteryStatus, setBatteryStatus] = useState<CheckStatus>("idle");
   const [batteryPct, setBatteryPct] = useState<number | null>(null);
   const [isPluggedIn, setIsPluggedIn] = useState(false);
+
+  /** Show "plug in" warning when battery < 50% and not charging. */
+  const showLowBatteryWarning =
+    batteryPct != null && batteryPct < BATTERY_WARNING_PCT && !isPluggedIn;
+
+  /** Show "free up space" warning when below pre-flight minimum (500 MB). */
+  const showLowStorageWarning =
+    storageMB != null && storageMB < PREFLIGHT_MIN_STORAGE_MB;
 
   const runMicCheck = async () => {
     setMicStatus("checking");
@@ -81,5 +89,8 @@ export function useSystemChecks() {
     batteryPct,
     isPluggedIn,
     runMicCheck,
+    runStorageCheck,
+    showLowBatteryWarning,
+    showLowStorageWarning,
   };
 }

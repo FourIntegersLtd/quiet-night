@@ -13,7 +13,7 @@ const COMPASSIONATE_STEP = 9.5;
 const PARTNER_ONLY_STEPS = [5, 6, 10, 11, 26, 27] as const;
 /** Step 24 = bedtime reminder; always show for both solo and partner users */
 const BEDTIME_REMINDER_STEP = 24;
-/** Step 25 = Apple Health; removed from flow for all users */
+/** Step 25 = Weight & height (BMI); show for all users */
 const HEALTH_STEP = 25;
 /** Step 28 = redundant pricing screen; skip so we go from Rate (27) to paywall */
 const PAYWALL_REDIRECT_STEP = 28;
@@ -21,7 +21,7 @@ const PAYWALL_REDIRECT_STEP = 28;
 function shouldSkipStep(step: number, answers: OnboardingAnswers): boolean {
   const hasPartner = answers.has_partner === true;
   if (step === BEDTIME_REMINDER_STEP) return false;
-  if (step === HEALTH_STEP) return true;
+  if (step === HEALTH_STEP) return false;
   if (step === PAYWALL_REDIRECT_STEP) return true;
   if (!hasPartner && (PARTNER_ONLY_STEPS as readonly number[]).includes(step)) return true;
   if (!hasPartner && step === COMPASSIONATE_STEP) return true;

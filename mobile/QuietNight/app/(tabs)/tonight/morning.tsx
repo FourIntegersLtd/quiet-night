@@ -21,6 +21,7 @@ import {
   setNightFactors,
   type NightFactors,
 } from "@/lib/nights";
+import { getMorningCelebration } from "@/lib/journey-data";
 import {
   getPartnerCheckInUrl,
   PARTNER_CHECKIN_SHARE_MESSAGE,
@@ -202,9 +203,9 @@ function getPeakTimeLabel(byHour: number[]): string {
   }
   if (maxCount === 0) return "—";
   const format = (h: number) => {
-    if (h === 0) return "12a";
-    if (h === 12) return "12p";
-    return h < 12 ? `${h}a` : `${h - 12}p`;
+    if (h === 0) return "12am";
+    if (h === 12) return "12pm";
+    return h < 12 ? `${h}am` : `${h - 12}pm`;
   };
   return `${format(peakStart)}–${format(peakStart + 1)}`;
 }
@@ -219,10 +220,10 @@ function getSnoringLevelLabel(snoreMinutes: number, eventCount: number): string 
 }
 
 function formatBarHour(h: number): string {
-  if (h === 0) return "12a";
-  if (h === 6) return "6a";
-  if (h === 12) return "12p";
-  if (h === 18) return "6p";
+  if (h === 0) return "12am";
+  if (h === 6) return "6am";
+  if (h === 12) return "12pm";
+  if (h === 18) return "6pm";
   return "";
 }
 
@@ -565,20 +566,30 @@ export default function MorningTruth() {
             </View>
             <View style={styles.xAxisRow}>
               <Text style={[styles.xAxisLabel, styles.xAxisLabelQuarter]}>
-                12a
+                12am
               </Text>
               <Text style={[styles.xAxisLabel, styles.xAxisLabelQuarter]}>
-                6a
+                6am
               </Text>
               <Text style={[styles.xAxisLabel, styles.xAxisLabelQuarter]}>
-                12p
+                12pm
               </Text>
               <Text style={[styles.xAxisLabel, styles.xAxisLabelQuarter]}>
-                6p
+                6pm
               </Text>
             </View>
           </View>
         )}
+
+        {(() => {
+          const celebration = getMorningCelebration(sessionId, actualSnoreMinutes);
+          if (!celebration) return null;
+          return (
+            <View style={styles.celebrationCard}>
+              <Text style={styles.celebrationText}>{celebration.message}</Text>
+            </View>
+          );
+        })()}
 
         <View style={styles.summaryCard}>
           <View style={styles.summaryHeader}>
@@ -799,6 +810,22 @@ const styles = StyleSheet.create({
   },
   xAxisLabelQuarter: {
     flex: 6,
+  },
+
+  celebrationCard: {
+    backgroundColor: semantic.success + "18",
+    padding: spacing.cardPadding,
+    borderRadius: radius.card,
+    marginHorizontal: spacing.screenPadding,
+    marginBottom: spacing.sectionGap,
+    borderWidth: 1,
+    borderColor: semantic.success + "40",
+  },
+  celebrationText: {
+    ...type.body,
+    fontFamily: fonts.bodyMedium,
+    color: text.primary,
+    textAlign: "center",
   },
 
   summaryCard: {

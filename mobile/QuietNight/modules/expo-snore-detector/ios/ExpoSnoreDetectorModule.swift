@@ -3,6 +3,7 @@ import SoundAnalysis
 import AVFoundation
 import CoreML
 import Accelerate
+import CoreMedia
 
 public class ExpoSnoreDetectorModule: Module {
     private var audioEngine = AVAudioEngine()
@@ -19,6 +20,12 @@ public class ExpoSnoreDetectorModule: Module {
     
     // We keep a small rolling buffer just to catch the 1 second *before* the snore started
     var preSnoreBuffer: [AVAudioPCMBuffer] = []
+    
+    /// Latest "Snoring" classification confidence for the current clip (sent when we stop recording).
+    var lastSnoringConfidence: Float = 0.99
+    
+    /// Gain applied when writing snore clips so playback is audible (phone is often far from user).
+    private let snoreRecordingGain: Float = 2.5
     
     public func definition() -> ModuleDefinition {
         Name("ExpoSnoreDetector")
@@ -69,12 +76,12 @@ public class ExpoSnoreDetectorModule: Module {
                     // 1. Send to AI Analyzer
                     self.streamAnalyzer?.analyze(buffer, atAudioFramePosition: time.sampleTime)
                     
-                    // 2. Handle Audio Writing
+                    // 2. Handle Audio Writing (apply gain so playback is audible)
                     DispatchQueue.main.async {
                         if self.isCurrentlyWritingSnore {
-                            // If we are in the middle of a snore, continuously append the audio
                             do {
-                                try self.currentAudioFile?.write(from: buffer)
+                                let boosted = self.copyBufferWithGain(buffer, gain: self.snoreRecordingGain)
+                                try self.currentAudioFile?.write(from: boosted)
                             } catch {
                                 print("Error appending buffer")
                             }
@@ -115,9 +122,10 @@ public class ExpoSnoreDetectorModule: Module {
         do {
             currentAudioFile = try AVAudioFile(forWriting: currentFileURL!, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
             
-            // Write the 1 second of audio that happened right BEFORE the AI triggered
+            // Write the 1 second of audio that happened right BEFORE the AI triggered (with same gain)
             for buffer in preSnoreBuffer {
-                try currentAudioFile?.write(from: buffer)
+                let boosted = self.copyBufferWithGain(buffer, gain: self.snoreRecordingGain)
+                try currentAudioFile?.write(from: boosted)
             }
             preSnoreBuffer.removeAll()
             
@@ -134,12 +142,47 @@ public class ExpoSnoreDetectorModule: Module {
         currentAudioFile = nil
         isCurrentlyWritingSnore = false
         
-        // Send the completed file to React Native
-        sendEvent("onSnoreDetected", [
-            "confidence": 0.99, // We just pass a static confidence for the final clip
+        // Duration from file (seconds)
+        var durationSeconds: Double = 0
+        let asset = AVURLAsset(url: fileURL)
+        let duration = asset.duration
+        if duration.isNumeric && duration.value > 0 {
+            durationSeconds = CMTimeGetSeconds(duration)
+        }
+        
+        let confidenceToSend = lastSnoringConfidence
+        lastSnoringConfidence = 0.99 // reset for next clip
+        
+        var payload: [String: Any] = [
+            "confidence": NSNumber(value: confidenceToSend),
             "timestamp": Date().timeIntervalSince1970,
             "audioFileUri": fileURL.absoluteString
-        ])
+        ]
+        if durationSeconds > 0 {
+            payload["durationSeconds"] = NSNumber(value: durationSeconds)
+        }
+        
+        sendEvent("onSnoreDetected", payload)
+    }
+
+    /// Copy buffer and apply gain (clamped to [-1, 1]) so snore clips are audible on playback.
+    private func copyBufferWithGain(_ buffer: AVAudioPCMBuffer, gain: Float) -> AVAudioPCMBuffer {
+        let format = buffer.format
+        let frameCount = buffer.frameLength
+        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return buffer
+        }
+        outBuffer.frameLength = frameCount
+        let channelCount = Int(format.channelCount)
+        for ch in 0..<channelCount {
+            guard let src = buffer.floatChannelData?[ch],
+                  let dst = outBuffer.floatChannelData?[ch] else { continue }
+            for i in 0..<Int(frameCount) {
+                let s = src[i] * gain
+                dst[i] = max(-1.0, min(1.0, s))
+            }
+        }
+        return outBuffer
     }
 
     private func cleanupOldSnoreFiles() {
@@ -176,6 +219,7 @@ class SnoreObserver: NSObject, SNResultsObserving {
         // Is it a snore?
         if topClassification.identifier == "Snoring" && topClassification.confidence > 0.90 {
             self.lastSnoreTime = now
+            self.module?.lastSnoringConfidence = topClassification.confidence
             
             // Tell the module to start appending audio to the file (if it isn't already)
             DispatchQueue.main.async {

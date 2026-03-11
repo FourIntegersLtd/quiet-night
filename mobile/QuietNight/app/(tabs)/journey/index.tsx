@@ -29,12 +29,14 @@ import {
   getWinningRemedyFromRealData,
   getMilestoneProgress,
   getSnoreScoresByMonth,
+  getExperimentStreak,
 } from "@/lib/journey-data";
-import { getBestRemedySummary, type BestRemedySummaryResponse } from "@/lib/api";
+import { getBestRemedySummary, getLatestEpworth, listSessions, getWeeklySummary, type BestRemedySummaryResponse } from "@/lib/api";
+import { setNightPartnerReport } from "@/lib/nights";
+import { useAuth } from "@/contexts/AuthContext";
 import { getStorage } from "@/lib/storage";
 import { STORAGE_KEYS } from "@/constants/app";
 
-const PARTNER_NAME = "Sarah";
 const WINNING_ILLUSTRATION_HEIGHT = 250;
 
 function getLastEpworthScore(): number | null {
@@ -52,17 +54,38 @@ const MILESTONE_NAMES = ["Start", "Experiment", "Review"];
 
 export default function JourneyScreen() {
   const router = useRouter();
+  const { session } = useAuth();
   const { width: windowWidth } = useWindowDimensions();
   const [refreshKey, setRefreshKey] = useState(0);
   const [bestRemedySummary, setBestRemedySummary] = useState<BestRemedySummaryResponse | null>(null);
   const [bestRemedyLoading, setBestRemedyLoading] = useState(true);
   const [lastEpworthScore, setLastEpworthScore] = useState<number | null>(() => getLastEpworthScore());
+  const [weeklySummary, setWeeklySummary] = useState<string | null>(null);
+  const [weeklySummaryLoading, setWeeklySummaryLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       setRefreshKey((k) => k + 1);
-      setLastEpworthScore(getLastEpworthScore());
-    }, [])
+      if (session?.accessToken) {
+        getLatestEpworth().then(({ data }) => {
+          if (data?.total_score != null) setLastEpworthScore(data.total_score);
+          else setLastEpworthScore(getLastEpworthScore());
+        });
+        listSessions({ limit: 30 }).then(({ data: sessions }) => {
+          if (sessions) {
+            sessions.forEach((s) => {
+              if (s.partner_report === "good" || s.partner_report === "bad") {
+                const nightKey = s.night_key.startsWith("night_") ? s.night_key : `night_${s.night_key}`;
+                setNightPartnerReport(nightKey, s.partner_report, s.partner_note ?? undefined);
+              }
+            });
+            setRefreshKey((k) => k + 1);
+          }
+        });
+      } else {
+        setLastEpworthScore(getLastEpworthScore());
+      }
+    }, [session?.accessToken])
   );
 
   const last7Days = getLast7DaysJourneyData();
@@ -70,6 +93,7 @@ export default function JourneyScreen() {
   const winningRemedy = getWinningRemedyFromRealData();
   const milestone = getMilestoneProgress();
   const snoreScoresByMonth = getSnoreScoresByMonth();
+  const experimentStreak = getExperimentStreak();
 
   // LLM best-remedy summary (backend); refetch when tab is focused
   useEffect(() => {
@@ -91,6 +115,23 @@ export default function JourneyScreen() {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  // Weekly AI summary (backend); refetch when tab is focused and user is logged in
+  useEffect(() => {
+    if (!session?.accessToken) return;
+    let cancelled = false;
+    setWeeklySummaryLoading(true);
+    getWeeklySummary()
+      .then(({ data }) => {
+        if (!cancelled && data?.summary) setWeeklySummary(data.summary);
+      })
+      .finally(() => {
+        if (!cancelled) setWeeklySummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey, session?.accessToken]);
 
   return (
     <ScrollView
@@ -148,7 +189,26 @@ export default function JourneyScreen() {
           })}
         </ScrollView>
         <Text style={styles.pathObjective}>{milestone.objective}</Text>
+        {experimentStreak.current >= 2 && (
+          <Text style={styles.streakText}>
+            You&apos;ve completed {experimentStreak.current} consecutive experiment nights!
+          </Text>
+        )}
       </View>
+
+      {/* This week: AI summary (logged-in users) */}
+      {session?.accessToken && (
+        <View style={[styles.card, styles.weeklyCard]}>
+          <Text style={styles.weeklyCardTitle}>This week</Text>
+          {weeklySummaryLoading ? (
+            <ActivityIndicator size="small" color={accent.teal} style={{ marginVertical: spacing.stackSm }} />
+          ) : (
+            <Text style={styles.weeklyCardText}>
+              {weeklySummary ?? "Record a few nights to see your weekly summary here."}
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Section 2: Winning formula (LLM or fallback from real data) */}
       <View style={[styles.card, styles.winningCard]}>
@@ -266,7 +326,17 @@ export default function JourneyScreen() {
           </Text>
         ) : (
           leaderboard.map((item, rank) => (
-            <View key={item.remedy} style={styles.leaderRow}>
+            <TouchableOpacity
+              key={item.remedy}
+              style={styles.leaderRow}
+              onPress={() =>
+                router.push({
+                  pathname: "/(tabs)/journey/remedy/[remedyKey]",
+                  params: { remedyKey: item.remedyKey },
+                })
+              }
+              activeOpacity={0.7}
+            >
               <Text style={styles.leaderRank}>{rank + 1}</Text>
               <View style={styles.leaderBody}>
                 <Text
@@ -280,16 +350,28 @@ export default function JourneyScreen() {
                 <Text style={styles.leaderMeta}>
                   {item.nights} night{item.nights !== 1 ? "s" : ""}
                   {item.reduction != null
-                    ? ` · ${item.reduction}% reduction`
+                    ? ` · ${item.reduction}% vs baseline`
                     : item.avgMins != null
                       ? ` · ${item.avgMins} mins avg`
                       : ""}
                 </Text>
               </View>
-              {item.isWarning && (
-                <Text style={styles.leaderWarning}>0% reduction</Text>
+              {item.isWarning ? (
+                <Text style={styles.leaderWarning}>Need more nights</Text>
+              ) : (
+                item.reduction != null && (
+                  <Text
+                    style={[
+                      styles.leaderReduction,
+                      item.reduction < 0 && styles.leaderReductionWorse,
+                    ]}
+                  >
+                    {item.reduction > 0 ? "−" : ""}{item.reduction}%
+                  </Text>
+                )
               )}
-            </View>
+              <Ionicons name="chevron-forward" size={18} color={text.muted} />
+            </TouchableOpacity>
           ))
         )}
       </View>
@@ -432,12 +514,32 @@ const styles = StyleSheet.create({
     color: text.secondary,
     marginTop: 4,
   },
+  streakText: {
+    ...type.bodySmall,
+    fontFamily: fonts.bodyMedium,
+    color: accent.teal,
+    marginTop: spacing.stackSm,
+  },
 
   card: {
     borderRadius: radius.card,
     padding: spacing.cardPadding,
     borderWidth: 1,
     marginBottom: spacing.sectionGap,
+  },
+  weeklyCard: {
+    backgroundColor: background.secondary,
+    borderColor: surface.elevated,
+  },
+  weeklyCardTitle: {
+    ...type.titleCard,
+    color: text.primary,
+    marginBottom: spacing.stackSm,
+  },
+  weeklyCardText: {
+    ...type.bodySmall,
+    color: text.secondary,
+    lineHeight: 22,
   },
   winningCard: {
     position: "relative",
@@ -573,6 +675,13 @@ const styles = StyleSheet.create({
   leaderNameWarning: { color: "#ef4444" },
   leaderMeta: { ...type.bodySmall, color: text.secondary, marginTop: 2 },
   leaderWarning: { ...type.bodySmall, color: "#ef4444" },
+  leaderReduction: {
+    ...type.bodySmall,
+    fontFamily: fonts.bodyMedium,
+    color: semantic.success,
+    marginRight: 4,
+  },
+  leaderReductionWorse: { color: "#ef4444" },
 
   medicalBanner: {
     flexDirection: "row",

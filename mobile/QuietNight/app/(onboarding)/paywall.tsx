@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -19,7 +19,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOnboarding } from "@/contexts/OnboardingContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useAlert } from "@/contexts/AlertContext";
-import { buildOnboardingPayload } from "@/lib/onboarding-answers";
+import { buildOnboardingPayload, getOrCreateOnboardingAnonymousId } from "@/lib/onboarding-answers";
+import { submitOnboardingAnonymous } from "@/lib/api";
 import { accent, background, text, type, spacing } from "@/constants/theme";
 
 /** Same as welcome: couple-sleeping.svg full-bleed */
@@ -50,6 +51,7 @@ export default function OnboardingPaywallScreen() {
   const alertApi = useAlert();
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [purchasing, setPurchasing] = useState(false);
+  const anonymousIdRef = useRef<string | null>(null);
 
   const packages = useMemo(
     () =>
@@ -65,6 +67,16 @@ export default function OnboardingPaywallScreen() {
       setSelectedPlan(annual?.identifier ?? packages[0].identifier);
     }
   }, [packages, selectedPlan]);
+
+  // Save onboarding to backend for user research (whether or not they create an account)
+  useEffect(() => {
+    const payload = buildOnboardingPayload(answers);
+    const anonymousId = getOrCreateOnboardingAnonymousId();
+    anonymousIdRef.current = anonymousId;
+    submitOnboardingAnonymous(anonymousId, payload as Record<string, unknown>).catch(() => {
+      // ignore; backend may be unreachable
+    });
+  }, []); // run once on mount; answers are stable by paywall
 
   const plans = useMemo(
     () =>
@@ -103,6 +115,9 @@ export default function OnboardingPaywallScreen() {
       first_name: null,
       role,
       has_partner: hasPartner,
+      anonymous_id: anonymousIdRef.current ?? undefined,
+      weight_kg: answers.weight_kg ?? undefined,
+      height_cm: answers.height_cm ?? undefined,
       onboarding_responses: onboardingPayload,
     });
     router.replace("/(tabs)");

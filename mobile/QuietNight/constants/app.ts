@@ -11,6 +11,8 @@ export const STORAGE_KEYS = {
   NIGHT_PARTNER_REPORTS: "night_partner_reports",
   NIGHT_FACTORS: "night_factors",
   NIGHT_RECORDING_TIMES: "night_recording_times",
+  /** Backend session id per night (for syncing to DB when user is logged in) */
+  NIGHT_SESSION_IDS: "night_session_ids",
   /** Auth & onboarding (UI-only; replace with backend later). */
   AUTH_SESSION: "auth_session",
   AUTH_USERS: "auth_users",
@@ -23,6 +25,8 @@ export const STORAGE_KEYS = {
   EPWORTH_LAST_RESULT: "epworth_last_result",
   /** 26-step onboarding wizard answers (local until submitted) */
   ONBOARDING_ANSWERS: "onboarding_answers",
+  /** Client-generated id for anonymous onboarding (saved to DB before account creation) */
+  ONBOARDING_ANONYMOUS_ID: "onboarding_anonymous_id",
 } as const;
 
 /** Build night key for a date (e.g. "2026-03-04" -> "night_2026-03-04"). */
@@ -35,6 +39,8 @@ export function nightKey(date: Date): string {
 export const LOW_STORAGE_MB = 100;
 /** Minimum free space (MB) to allow starting tracking (pre-flight). */
 export const PREFLIGHT_MIN_STORAGE_MB = 500;
+/** Battery % below which we show "plug in" warning in pre-flight modal. */
+export const BATTERY_WARNING_PCT = 50;
 export const LOW_BATTERY_PCT = 0.2;
 export const MAX_RECORDINGS_MB = 500;
 

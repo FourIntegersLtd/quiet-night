@@ -11,6 +11,7 @@ import {
   Linking,
   Platform,
   KeyboardAvoidingView,
+  FlatList,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -18,12 +19,14 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useAlert } from "@/contexts/AlertContext";
-import { getUserById } from "@/lib/auth-store";
+import { getUserById, updateUser } from "@/lib/auth-store";
+import { updateMe } from "@/lib/api";
 import {
   getRecordingsSizeMB,
   getWavFileCount,
   clearWavRecordingsOlderThanDays,
 } from "@/lib/recordings";
+import { loadOnboardingAnswers, saveOnboardingAnswers } from "@/lib/onboarding-answers";
 import {
   background,
   accent,
@@ -40,6 +43,22 @@ import { tourEvents } from "@/lib/tour-events";
 const SUPPORT_EMAIL = "hello@fourintegers.com";
 const TERMS_URL = "https://quietnight.app/terms";
 const PRIVACY_URL = "https://quietnight.app/privacy";
+
+const BEDTIME_OPTIONS: string[] = [];
+for (let h = 19; h <= 23; h++) {
+  BEDTIME_OPTIONS.push(`${String(h).padStart(2, "0")}:00`, `${String(h).padStart(2, "0")}:30`);
+}
+BEDTIME_OPTIONS.push("00:00", "00:30");
+
+function formatBedtimeLabel(value: string): string {
+  const [hStr, mStr] = value.split(":");
+  const h = parseInt(hStr ?? "21", 10);
+  const m = parseInt(mStr ?? "0", 10);
+  if (h === 0) return `12:${String(m).padStart(2, "0")} AM`;
+  if (h < 12) return `${h}:${String(m).padStart(2, "0")} AM`;
+  if (h === 12) return `12:${String(m).padStart(2, "0")} PM`;
+  return `${h - 12}:${String(m).padStart(2, "0")} PM`;
+}
 
 function InviteEmailModalContent({
   partnerEmail,
@@ -120,11 +139,17 @@ function InviteEmailModalContent({
   );
 }
 
+function computeBmi(weightKg: number | undefined | null, heightCm: number | undefined | null): number | null {
+  if (weightKg == null || heightCm == null || weightKg <= 0 || heightCm <= 0) return null;
+  const m = heightCm / 100;
+  return Math.round((weightKg / (m * m)) * 10) / 10;
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const alertApi = useAlert();
-  const { user, connection, generatePartnerCode, linkWithPartner, signOut } = useAuth();
+  const { user, session, connection, generatePartnerCode, linkWithPartner, signOut, refresh } = useAuth();
   const [storageMB, setStorageMB] = useState(0);
   const [wavCount, setWavCount] = useState(0);
   const [partnerCode, setPartnerCode] = useState("");
@@ -135,6 +160,13 @@ export default function ProfileScreen() {
   const [inviteSending, setInviteSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [inviteEmailModalVisible, setInviteEmailModalVisible] = useState(false);
+  const [bodyEditModalVisible, setBodyEditModalVisible] = useState(false);
+  const [bodyEditWeight, setBodyEditWeight] = useState("");
+  const [bodyEditHeight, setBodyEditHeight] = useState("");
+  const [bodyEditSaving, setBodyEditSaving] = useState(false);
+  const [notificationModalVisible, setNotificationModalVisible] = useState(false);
+  const [bedtimeTime, setBedtimeTime] = useState("21:00");
+  const [bedtimePickerVisible, setBedtimePickerVisible] = useState(false);
   const partnerUserId = connection
     ? user?.role === "SLEEPER"
       ? connection.partner_id
@@ -307,10 +339,52 @@ export default function ProfileScreen() {
     });
   };
 
+  const bmi = computeBmi(user?.weight_kg, user?.height_cm);
+  const openBodyEdit = () => {
+    setBodyEditWeight(user?.weight_kg != null ? String(user.weight_kg) : "");
+    setBodyEditHeight(user?.height_cm != null ? String(user.height_cm) : "");
+    setBodyEditModalVisible(true);
+  };
+  const saveBodyEdit = async () => {
+    const w = bodyEditWeight.trim() ? parseFloat(bodyEditWeight.replace(",", ".")) : NaN;
+    const h = bodyEditHeight.trim() ? parseFloat(bodyEditHeight.replace(",", ".")) : NaN;
+    const weight_kg = Number.isFinite(w) && w > 0 && w < 300 ? Math.round(w * 10) / 10 : undefined;
+    const height_cm = Number.isFinite(h) && h > 0 && h < 250 ? Math.round(h) : undefined;
+    if (!user?.id) return;
+    setBodyEditSaving(true);
+    try {
+      updateUser(user.id, { weight_kg, height_cm });
+      if (session?.accessToken) {
+        const { error } = await updateMe({ weight_kg: weight_kg ?? null, height_cm: height_cm ?? null });
+        if (error) throw new Error(error.message ?? "Could not update profile.");
+      }
+      await refresh();
+      setBodyEditModalVisible(false);
+    } catch (e) {
+      alertApi.show({ title: "Error", message: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setBodyEditSaving(false);
+    }
+  };
+
   const openUrl = (url: string, fallbackTitle: string) => {
     Linking.canOpenURL(url)
       .then((supported) => { if (supported) Linking.openURL(url); else alertApi.show({ title: "Couldn't open link", message: `We couldn't open ${fallbackTitle}.` }); })
       .catch(() => alertApi.show({ title: "Couldn't open link", message: `We couldn't open ${fallbackTitle}.` }));
+  };
+
+  const openNotificationModal = () => {
+    const answers = loadOnboardingAnswers();
+    setBedtimeTime(answers.bedtime_reminder_time ?? "21:00");
+    setNotificationModalVisible(true);
+  };
+
+  const saveBedtimeTime = (time: string) => {
+    setBedtimeTime(time);
+    setBedtimePickerVisible(false);
+    const answers = loadOnboardingAnswers();
+    saveOnboardingAnswers({ ...answers, bedtime_reminder_time: time });
+    alertApi.show({ title: "Reminder updated", message: "Your bedtime reminder time has been saved." });
   };
 
   const handleDeleteAccount = () => {
@@ -418,6 +492,21 @@ export default function ProfileScreen() {
             </View>
           </View>
           <Divider />
+          <TouchableOpacity style={styles.settingsRow} onPress={openBodyEdit} activeOpacity={0.8}>
+            <View style={[styles.settingsRowIconWrap, { backgroundColor: accent.tealSoft }]}>
+              <Ionicons name="body-outline" size={22} color={accent.primary} />
+            </View>
+            <View style={styles.settingsRowBody}>
+              <Text style={styles.settingsRowLabel}>Weight & height</Text>
+              <Text style={styles.settingsRowSub}>
+                {user?.weight_kg != null && user?.height_cm != null
+                  ? `${user.weight_kg} kg · ${user.height_cm} cm${bmi != null ? ` · BMI ${bmi}` : ""}`
+                  : "Add weight and height to see BMI"}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={text.muted} />
+          </TouchableOpacity>
+          <Divider />
           {connection ? (
             <View style={styles.settingsRow}>
               <View style={[styles.settingsRowIconWrap, { backgroundColor: accent.tealSoft }]}>
@@ -468,6 +557,53 @@ export default function ProfileScreen() {
         </Section>
 
         <Modal
+          visible={bodyEditModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setBodyEditModalVisible(false)}
+        >
+          <KeyboardAvoidingView
+            style={[styles.modalContainer, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setBodyEditModalVisible(false)} hitSlop={12} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={28} color={text.primary} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Weight & height</Text>
+              <Text style={styles.modalSubtitle}>Used to calculate your BMI. You can change this anytime.</Text>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.inviteEmailLabel}>Weight (kg)</Text>
+              <TextInput
+                style={styles.inviteEmailInput}
+                placeholder="e.g. 72"
+                placeholderTextColor={text.muted}
+                value={bodyEditWeight}
+                onChangeText={setBodyEditWeight}
+                keyboardType="decimal-pad"
+              />
+              <Text style={[styles.inviteEmailLabel, { marginTop: spacing.stackMd }]}>Height (cm)</Text>
+              <TextInput
+                style={styles.inviteEmailInput}
+                placeholder="e.g. 175"
+                placeholderTextColor={text.muted}
+                value={bodyEditHeight}
+                onChangeText={setBodyEditHeight}
+                keyboardType="decimal-pad"
+              />
+              <TouchableOpacity
+                style={[styles.primaryButton, { marginTop: spacing.stackLg }, bodyEditSaving && styles.buttonDisabled]}
+                onPress={saveBodyEdit}
+                disabled={bodyEditSaving}
+              >
+                <Text style={styles.primaryButtonText}>{bodyEditSaving ? "Saving…" : "Save"}</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        <Modal
           visible={inviteEmailModalVisible}
           animationType="slide"
           presentationStyle="pageSheet"
@@ -485,34 +621,71 @@ export default function ProfileScreen() {
           />
         </Modal>
 
+        <Modal
+          visible={notificationModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => { setNotificationModalVisible(false); setBedtimePickerVisible(false); }}
+        >
+          <KeyboardAvoidingView
+            style={[styles.modalContainer, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                onPress={() => { setNotificationModalVisible(false); setBedtimePickerVisible(false); }}
+                hitSlop={12}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={28} color={text.primary} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Reminders</Text>
+              <Text style={styles.modalSubtitle}>
+                Get a reminder when it&apos;s time to start tracking for the night.
+              </Text>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.inviteEmailLabel}>Bedtime reminder</Text>
+              <TouchableOpacity
+                style={styles.notificationTimeRow}
+                onPress={() => setBedtimePickerVisible(!bedtimePickerVisible)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.notificationTimeRowLeft}>
+                  <Ionicons name="moon-outline" size={22} color={accent.primary} style={{ marginRight: 12 }} />
+                  <Text style={styles.notificationTimeText}>{formatBedtimeLabel(bedtimeTime)}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={text.muted} />
+              </TouchableOpacity>
+              {bedtimePickerVisible ? (
+                <View style={styles.bedtimePickerSheet}>
+                  <FlatList
+                    data={BEDTIME_OPTIONS}
+                    keyExtractor={(item) => item}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={[styles.bedtimeOption, item === bedtimeTime && styles.bedtimeOptionSelected]}
+                        onPress={() => saveBedtimeTime(item)}
+                      >
+                        <Text style={[styles.bedtimeOptionText, item === bedtimeTime && styles.bedtimeOptionTextSelected]}>
+                          {formatBedtimeLabel(item)}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  />
+                </View>
+              ) : null}
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
         <Section title="Settings" >
-          <SettingsRow
-            icon="list-outline"
-            label="Recording settings"
-            sublabel="Show or skip wizard steps"
-            onPress={() => alertApi.show({ title: "Recording settings", message: "Configure which wizard steps to show. Coming soon." })}
-          />
-          <Divider />
-          <SettingsRow
-            icon="moon-outline"
-            label="Sleep settings"
-            sublabel="Auto detection, sensitivity, default times"
-            onPress={() => alertApi.show({ title: "Sleep settings", message: "Coming soon." })}
-          />
-          <Divider />
           <SettingsRow
             icon="notifications-outline"
             label="Notifications"
-            sublabel="Bedtime reminder, morning log, weekly summary"
-            onPress={() => {}}
+            sublabel="Bedtime reminder"
+            onPress={openNotificationModal}
             iconColor={text.secondary}
-          />
-          <Divider />
-          <SettingsRow
-            icon="home-outline"
-            label="Homepage settings"
-            sublabel="Weather widget, tip of the day, last night summary"
-            onPress={() => alertApi.show({ title: "Homepage settings", message: "Coming soon." })}
           />
           <Divider />
           <SettingsRow
@@ -785,6 +958,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: text.primary,
     marginBottom: spacing.stackMd,
+  },
+  notificationTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: background.secondary,
+    borderWidth: 1,
+    borderColor: surface.elevated,
+    borderRadius: radius.button,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: spacing.stackSm,
+  },
+  notificationTimeRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  notificationTimeText: {
+    fontSize: 16,
+    color: text.primary,
+    fontFamily: fonts.bodyMedium,
+  },
+  bedtimePickerSheet: {
+    maxHeight: 220,
+    backgroundColor: background.secondary,
+    borderRadius: radius.button,
+    borderWidth: 1,
+    borderColor: surface.elevated,
+    overflow: "hidden",
+  },
+  bedtimeOption: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  bedtimeOptionSelected: {
+    backgroundColor: accent.tealSoft,
+  },
+  bedtimeOptionText: {
+    fontSize: 16,
+    color: text.primary,
+  },
+  bedtimeOptionTextSelected: {
+    color: accent.primary,
+    fontFamily: fonts.bodyMedium,
   },
   inviteEmailHint: {
     ...type.bodySmall,
