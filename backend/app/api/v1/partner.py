@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_current_user_id, get_supabase_client
+from app.dependencies import get_current_user_id, get_partner_service
 from app.models.schemas import (
     CodeLinkRequest,
     InviteRequest,
@@ -14,10 +14,6 @@ from app.models.schemas import (
 from app.services.partner_service import PartnerService
 
 router = APIRouter()
-
-
-def get_partner_service(supabase=Depends(get_supabase_client)):
-    return PartnerService(supabase)
 
 
 @router.post("/code/generate")
@@ -71,4 +67,4 @@ def checkin_submit(
     body: CheckinSubmitRequest,
     service: Annotated[PartnerService, Depends(get_partner_service)],
 ):
-    return service.submit_checkin(body.token, body.report)
+    return service.submit_checkin(body.token, body.report, body.note)

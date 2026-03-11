@@ -21,6 +21,20 @@ def _make_key(prefix: str, *args: Any, **kwargs: Any) -> str:
     return f"{prefix}:{h}"
 
 
+def invalidate_prefix(prefix: str) -> None:
+    """Remove all cache entries whose key starts with prefix:. Call when new recording data is saved so LLM responses stay up to date."""
+    to_del = [k for k in _cache if k.startswith(f"{prefix}:")]
+    for k in to_del:
+        del _cache[k]
+
+
+def invalidate_llm_caches() -> None:
+    """Invalidate all LLM-related caches (night insight, personalized tip, best remedy summary). Call after end_session or append_snores."""
+    invalidate_prefix("night_insight")
+    invalidate_prefix("personalized_tip")
+    invalidate_prefix("best_remedy_summary")
+
+
 def cached(prefix: str, ttl_seconds: int = TTL_SECONDS):
     """Decorator: cache function result for ttl_seconds (default 24h)."""
 

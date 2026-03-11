@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_current_user_id, get_supabase_client
+from app.dependencies import get_current_user_id, get_session_service
 from app.models.schemas import (
     SessionStartRequest,
     SessionEndRequest,
@@ -14,10 +14,6 @@ from app.models.schemas import (
 from app.services.session_service import SessionService
 
 router = APIRouter()
-
-
-def get_session_service(supabase=Depends(get_supabase_client)):
-    return SessionService(supabase)
 
 
 @router.get("")
@@ -51,6 +47,7 @@ def create_session(
 ):
     return service.create_session(
         user_id,
+        night_key=body.night_key,
         remedy_type=body.remedy_type,
         is_shared_room_night=body.is_shared_room_night,
         factors=body.factors,

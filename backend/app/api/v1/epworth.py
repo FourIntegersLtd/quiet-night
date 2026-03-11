@@ -4,15 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import get_current_user_id, get_supabase_client
+from app.dependencies import get_current_user_id, get_epworth_service
 from app.models.schemas import EpworthSubmitRequest
 from app.services.epworth_service import EpworthService
 
 router = APIRouter()
-
-
-def get_epworth_service(supabase=Depends(get_supabase_client)):
-    return EpworthService(supabase)
 
 
 @router.post("")

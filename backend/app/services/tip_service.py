@@ -13,19 +13,22 @@ from app.llm.schemas import PersonalizedTip
 
 logger = logging.getLogger(__name__)
 
-TIP_SYSTEM = """You are a supportive sleep coach for the QuietNight app. Given the user's LAST NIGHT's sleep data (pre-flight factors, remedy tried, notes, snoring stats), write ONE short, actionable tip for tonight. Focus on one concrete change they could try based on their data. Be warm and encouraging. Output only valid JSON matching the schema."""
+TIP_SYSTEM = """You are a supportive sleep coach for the QuietNight app. Write ONE short, actionable tip for tonight based on the user's last night. Use their name when given so it feels personal. Never give generic advice; tie the tip directly to their data (factors, remedy, snoring, notes). Be warm and encouraging. Output only valid JSON matching the schema."""
 
-TIP_USER_TEMPLATE = """Last night's data:
+TIP_USER_TEMPLATE = """User's name (use naturally): {user_name}
+Last night's data:
 - Snoring: {snore_mins} minutes ({event_count} events), peak around {peak_time}
 - Remedy tried: {remedy}
 - Factors: {factors_str}
 - Notes: {notes}
 
-Generate one short, actionable tip (1-2 sentences) tailored to this data. Focus on what they could try differently tonight."""
+Generate one short, actionable tip (1-2 sentences) tailored to this person's data. Address them by name; no generic messages."""
 
 
-def _fallback_tip() -> str:
-    return "Keeping a consistent bedtime helps your body clock. Try to go to bed within the same 30-minute window each night."
+def _fallback_tip(user_name: str | None = None) -> str:
+    name = (user_name or "").strip() or None
+    prefix = f"{name}, " if name else ""
+    return f"{prefix}Keeping a consistent bedtime helps your body clock. Try to go to bed within the same 30-minute window each night."
 
 
 def _factors_to_str(factors: dict[str, Any] | None) -> str:
@@ -50,6 +53,7 @@ def get_personalized_tip(
     remedy: str | None = None,
     factors: dict[str, Any] | None = None,
     note: str | None = None,
+    user_name: str | None = None,
 ) -> str:
     """
     Return a personalized tip for the Tonight screen based on last night.
@@ -60,6 +64,7 @@ def get_personalized_tip(
     remedy_str = remedy or "—"
 
     user_prompt = TIP_USER_TEMPLATE.format(
+        user_name=user_name or "there",
         snore_mins=snore_mins,
         peak_time=peak_time or "—",
         event_count=event_count,
@@ -76,5 +81,5 @@ def get_personalized_tip(
     )
     if not parsed:
         logger.info("[tip] Using fallback personalized tip")
-        return _fallback_tip()
+        return _fallback_tip(user_name)
     return parsed.tip

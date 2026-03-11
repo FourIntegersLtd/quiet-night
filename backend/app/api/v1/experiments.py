@@ -4,15 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_current_user_id, get_supabase_client
+from app.dependencies import get_current_user_id, get_experiment_service
 from app.models.schemas import ExperimentCreateRequest, ExperimentUpdateRequest
 from app.services.experiment_service import ExperimentService
 
 router = APIRouter()
-
-
-def get_experiment_service(supabase=Depends(get_supabase_client)):
-    return ExperimentService(supabase)
 
 
 @router.get("")

@@ -1,4 +1,4 @@
-"""FastAPI dependencies: auth, db client."""
+"""FastAPI dependencies: auth, db client, and shared service factories."""
 
 import json
 import logging
@@ -10,7 +10,13 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, get_supabase_admin
+from app.services.auth_service import AuthService
+from app.services.epworth_service import EpworthService
+from app.services.experiment_service import ExperimentService
+from app.services.partner_service import PartnerService
+from app.services.session_service import SessionService
+from app.services.supabase_auth_service import SupabaseAuthService
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
@@ -83,7 +89,6 @@ def get_supabase_client():
 
 def get_supabase_admin_client():
     """Dependency that yields Supabase admin client (service role). Use for profile/DB ops to bypass RLS."""
-    from app.db.supabase import get_supabase_admin
     admin = get_supabase_admin()
     if not admin:
         raise HTTPException(
@@ -91,3 +96,36 @@ def get_supabase_admin_client():
             detail="Add SUPABASE_SERVICE_ROLE_KEY to backend/app/.env (Supabase Dashboard → Settings → API → service_role secret)",
         )
     return admin
+
+
+# ----- Shared service factories (single place for DI) -----
+
+
+def get_session_service(supabase=Depends(get_supabase_client)):
+    """Session CRUD, snores, verdict storage."""
+    return SessionService(supabase)
+
+
+def get_auth_service(supabase=Depends(get_supabase_admin_client)):
+    """Profile, onboarding, connection. Uses admin client for RLS bypass."""
+    return AuthService(supabase)
+
+
+def get_partner_service(supabase=Depends(get_supabase_client)):
+    """Partner codes, invite, check-in."""
+    return PartnerService(supabase)
+
+
+def get_epworth_service(supabase=Depends(get_supabase_client)):
+    """Epworth assessments."""
+    return EpworthService(supabase)
+
+
+def get_experiment_service(supabase=Depends(get_supabase_client)):
+    """Experiments (multi-day trials)."""
+    return ExperimentService(supabase)
+
+
+def get_supabase_auth_service(supabase=Depends(get_supabase_client)):
+    """Supabase Auth (sign-in/up/out, refresh). Uses anon client."""
+    return SupabaseAuthService(supabase)

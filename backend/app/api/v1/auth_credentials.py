@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_supabase_client
+from app.dependencies import get_supabase_auth_service
 from app.models.schemas import (
     SignUpRequest,
     SignUpResponse,
@@ -15,10 +15,6 @@ from app.models.schemas import (
 from app.services.supabase_auth_service import SupabaseAuthService
 
 router = APIRouter(prefix="/auth", tags=["auth-credentials"])
-
-
-def get_supabase_auth_service(client=Depends(get_supabase_client)):
-    return SupabaseAuthService(client)
 
 
 @router.post("/signup", response_model=SignUpResponse)
